@@ -15,7 +15,17 @@ const upload = multer({
 });
 
 export function registerRoutes(app: Express): Server {
-  const rekognition = new RekognitionClient({ region: "us-east-1" });
+  if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+    throw new Error("AWS credentials not configured");
+  }
+  
+  const rekognition = new RekognitionClient({ 
+    region: process.env.AWS_REGION || "us-east-1",
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+    }
+  });
 
   app.post("/api/scan", async (req, res) => {
     try {
@@ -75,6 +85,7 @@ export function registerRoutes(app: Express): Server {
       // Compare faces in each image
       const results = await Promise.all(images.map(async (image, index) => {
         try {
+          console.log(`Analyzing image ${index + 1}...`);
           const command = new CompareFacesCommand({
             SourceImage: { Bytes: referenceImage },
             TargetImage: { Bytes: image.buffer },
@@ -82,6 +93,7 @@ export function registerRoutes(app: Express): Server {
           });
 
           const response = await rekognition.send(command);
+          console.log(`Image ${index + 1} analysis result:`, response);
           const bestMatch = response.FaceMatches?.[0];
 
           return {
