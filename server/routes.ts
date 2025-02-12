@@ -80,6 +80,7 @@ export function registerRoutes(app: Express): Server {
 
       // Get the storage provider to fetch target images
       const provider = createStorageProvider(job.driveUrl);
+      await provider.scanDirectory(job.driveUrl); // This sets the URL in the provider
       const images = await provider.getImages();
 
       // Compare faces in each image

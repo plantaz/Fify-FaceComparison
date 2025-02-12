@@ -115,6 +115,12 @@ export class GoogleDriveProvider implements CloudStorageProvider {
       throw new Error("Google Drive API key not configured");
     }
 
+    if (!this.url) {
+      console.error('URL not set in provider');
+      throw new Error("Drive URL not found");
+    }
+
+    console.log('Getting images for URL:', this.url);
     const folderId = this.extractFolderId(this.url);
     const images: Array<{ buffer: Buffer }> = [];
     let pageToken = '';
