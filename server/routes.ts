@@ -100,7 +100,8 @@ export function registerRoutes(app: Express): Server {
           return {
             imageId: index + 1,
             similarity: bestMatch?.Similarity || 0,
-            matched: !!bestMatch
+            matched: !!bestMatch,
+            url: `https://lh3.googleusercontent.com/d/${image.id}=s1000`
           };
         } catch (error) {
           console.error(`Face comparison error for image ${index + 1}:`, error);
