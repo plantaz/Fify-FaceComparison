@@ -33,20 +33,28 @@ export class GoogleDriveProvider implements CloudStorageProvider {
 
   private extractFolderId(url: string): string {
     try {
-      // Handle different URL formats
       const urlStr = decodeURIComponent(url);
       
-      // Format: /drive/u/0/folders/FOLDER_ID
-      const driveMatch = urlStr.match(/drive\/(?:u\/\d+\/)?folders\/([a-zA-Z0-9-_]+)/);
-      if (driveMatch) return driveMatch[1];
-      
-      // Format: /folders/FOLDER_ID
-      const folderMatch = urlStr.match(/folders\/([a-zA-Z0-9-_]+)/);
-      if (folderMatch) return folderMatch[1];
+      // Try all possible formats
+      const patterns = [
+        /\/folders\/([a-zA-Z0-9-_]+)/,
+        /drive\/(?:u\/\d+\/)?folders\/([a-zA-Z0-9-_]+)/,
+        /\/d\/([a-zA-Z0-9-_]+)/,
+        /id=([a-zA-Z0-9-_]+)/
+      ];
 
-      // Format: /d/FOLDER_ID
-      const shareMatch = urlStr.match(/d\/([a-zA-Z0-9-_]+)/);
-      if (shareMatch) return shareMatch[1];
+      for (const pattern of patterns) {
+        const match = urlStr.match(pattern);
+        if (match && match[1]) {
+          return match[1];
+        }
+      }
+
+      // If URL has a path, try to extract the last segment
+      const lastSegment = urlStr.split('/').filter(Boolean).pop();
+      if (lastSegment && lastSegment.length > 10) {
+        return lastSegment;
+      }
 
       throw new Error("Could not find folder ID in URL");
     } catch (error) {
