@@ -8,10 +8,18 @@ interface Result {
 }
 
 interface ResultsDisplayProps {
-  results: Result[];
+  results: Result[] | null;
 }
 
 export default function ResultsDisplay({ results }: ResultsDisplayProps) {
+  if (!results) {
+    return (
+      <div className="text-center">
+        <p className="text-muted-foreground">No results available</p>
+      </div>
+    );
+  }
+
   const matchedCount = results.filter(r => r.matched).length;
 
   return (

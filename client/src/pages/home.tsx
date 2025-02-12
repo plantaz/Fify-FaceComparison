@@ -12,12 +12,12 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background">
       <HeroSection />
-      
+
       <main className="container mx-auto px-4 py-8">
         {!scanJob && (
           <UrlForm onScanComplete={setScanJob} />
         )}
-        
+
         {scanJob && !analysisComplete && (
           <FaceUpload 
             jobId={scanJob.id} 
@@ -25,9 +25,9 @@ export default function Home() {
             onAnalysisComplete={() => setAnalysisComplete(true)} 
           />
         )}
-        
-        {scanJob && analysisComplete && (
-          <ResultsDisplay results={scanJob.results} />
+
+        {scanJob && analysisComplete && scanJob.results && (
+          <ResultsDisplay results={scanJob.results as any[]} />
         )}
       </main>
     </div>
