@@ -122,7 +122,7 @@ export class GoogleDriveProvider implements CloudStorageProvider {
 
     console.log('Getting images for URL:', this.url);
     const folderId = this.extractFolderId(this.url);
-    const images: Array<{ buffer: Buffer }> = [];
+    const images: Array<{ buffer: Buffer, id: string }> = [];
     let pageToken = '';
 
     do {
@@ -158,7 +158,7 @@ export class GoogleDriveProvider implements CloudStorageProvider {
           
           if (imageResponse.ok) {
             const arrayBuffer = await imageResponse.arrayBuffer();
-            return { buffer: Buffer.from(arrayBuffer) };
+            return { buffer: Buffer.from(arrayBuffer), id: file.id };
           }
           return null;
         } catch (error) {

@@ -101,7 +101,7 @@ export function registerRoutes(app: Express): Server {
             imageId: index + 1,
             similarity: bestMatch?.Similarity || 0,
             matched: !!bestMatch,
-            url: `https://lh3.googleusercontent.com/d/${image.id}=s1000`
+            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined
           };
         } catch (error) {
           console.error(`Face comparison error for image ${index + 1}:`, error);
