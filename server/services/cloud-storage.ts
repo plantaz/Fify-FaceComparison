@@ -23,9 +23,13 @@ export class OneDriveProvider implements CloudStorageProvider {
 }
 
 export class GoogleDriveProvider implements CloudStorageProvider {
+  private url: string;
+  
   constructor(
     private apiKey: string
-  ) {}
+  ) {
+    this.url = '';
+  }
 
   private extractFolderId(url: string): string {
     // Handle both folder URLs and shared URLs
@@ -42,7 +46,8 @@ export class GoogleDriveProvider implements CloudStorageProvider {
     if (!process.env.GOOGLE_DRIVE_API_KEY) {
       throw new Error("Google Drive API key not configured");
     }
-
+    
+    this.url = url;
     const folderId = this.extractFolderId(url);
     let imageCount = 0;
     let pageToken = '';
