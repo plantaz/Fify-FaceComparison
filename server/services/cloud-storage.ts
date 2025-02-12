@@ -33,7 +33,9 @@ export class GoogleDriveProvider implements CloudStorageProvider {
 
   private extractFolderId(url: string): string {
     try {
+      console.log('Processing URL:', url);
       const urlStr = decodeURIComponent(url);
+      console.log('Decoded URL:', urlStr);
       
       // Try all possible formats
       const patterns = [
@@ -44,9 +46,11 @@ export class GoogleDriveProvider implements CloudStorageProvider {
       ];
 
       for (const pattern of patterns) {
+        console.log('Trying pattern:', pattern);
         const match = urlStr.match(pattern);
-        if (match && match[1]) {
-          return match[1];
+        if (match) {
+          console.log('Match found:', match);
+          if (match[1]) return match[1];
         }
       }
 
