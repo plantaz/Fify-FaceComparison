@@ -7,6 +7,7 @@ import {
   RekognitionClient, 
   CompareFacesCommand 
 } from "@aws-sdk/client-rekognition";
+import { createStorageProvider } from "./services/cloud-storage";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -20,20 +21,32 @@ export function registerRoutes(app: Express): Server {
     try {
       const { url } = driveUrlSchema.parse(req.body);
       const driveType = url.includes('onedrive') ? 'onedrive' : 'gdrive';
-      
-      // TODO: Actually scan drive - mocked for now
-      const imageCount = Math.floor(Math.random() * 20) + 1;
 
-      const job = await storage.createScanJob({
-        driveUrl: url,
-        driveType,
-        imageCount,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
+      // Create appropriate storage provider
+      const provider = createStorageProvider(url);
 
-      res.json(job);
+      try {
+        // Get actual image count from the drive
+        const imageCount = await provider.scanDirectory(url);
+
+        const job = await storage.createScanJob({
+          driveUrl: url,
+          driveType,
+          imageCount,
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        });
+
+        res.json(job);
+      } catch (error) {
+        console.error('Drive scanning error:', error);
+        res.status(500).json({ 
+          error: "Failed to scan drive directory",
+          details: (error as Error).message
+        });
+      }
     } catch (error) {
+      console.error('Validation error:', error);
       res.status(400).json({ error: (error as Error).message });
     }
   });
@@ -61,6 +74,7 @@ export function registerRoutes(app: Express): Server {
       res.json(updatedJob);
 
     } catch (error) {
+      console.error('Analysis error:', error);
       res.status(500).json({ error: (error as Error).message });
     }
   });

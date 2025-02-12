@@ -7,7 +7,8 @@ import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { validateDriveUrl } from "@/lib/drive-utils";
+import { AlertCircle } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface UrlFormProps {
   onScanComplete: (job: ScanJob) => void;
@@ -26,13 +27,24 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
       return res.json();
     },
     onSuccess: (data) => {
+      if (data.imageCount === 0) {
+        toast({
+          variant: "default",
+          title: "No Images Found",
+          description: "The provided directory doesn't contain any compatible images."
+        });
+        return;
+      }
       onScanComplete(data);
     },
-    onError: (error) => {
+    onError: (error: Error) => {
+      const isCredentialsError = error.message.includes('credentials not configured');
       toast({
         variant: "destructive",
-        title: "Error",
-        description: error.message
+        title: isCredentialsError ? "Missing API Credentials" : "Error",
+        description: isCredentialsError 
+          ? "Cloud storage access is not properly configured. Please try again later."
+          : error.message
       });
     }
   });
@@ -46,13 +58,16 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
               placeholder="Paste your OneDrive or Google Drive URL"
               {...form.register("url")}
             />
-            
+
             {form.formState.errors.url && (
-              <p className="text-sm text-destructive">
-                {form.formState.errors.url.message}
-              </p>
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {form.formState.errors.url.message}
+                </AlertDescription>
+              </Alert>
             )}
-            
+
             <Button 
               type="submit" 
               className="w-full"
