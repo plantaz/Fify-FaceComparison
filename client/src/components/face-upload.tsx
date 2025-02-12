@@ -14,7 +14,7 @@ interface FaceUploadProps {
   setScanJob: (job: ScanJob | null) => void;
 }
 
-export default function FaceUpload({ jobId, imageCount, onAnalysisComplete }: FaceUploadProps) {
+export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setScanJob }: FaceUploadProps) {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
 
