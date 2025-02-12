@@ -43,7 +43,8 @@ export default function FaceUpload({ jobId, imageCount, onAnalysisComplete }: Fa
       if (!res.ok) throw new Error("Analysis failed");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setScanJob(data);
       onAnalysisComplete();
     },
     onError: (error) => {

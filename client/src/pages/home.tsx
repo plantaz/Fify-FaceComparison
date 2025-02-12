@@ -26,8 +26,8 @@ export default function Home() {
           />
         )}
 
-        {scanJob && analysisComplete && scanJob.results && (
-          <ResultsDisplay results={scanJob.results as any[]} />
+        {scanJob && analysisComplete && (
+          <ResultsDisplay results={scanJob.results || []} />
         )}
       </main>
     </div>
