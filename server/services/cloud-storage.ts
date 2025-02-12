@@ -32,14 +32,27 @@ export class GoogleDriveProvider implements CloudStorageProvider {
   }
 
   private extractFolderId(url: string): string {
-    // Handle both folder URLs and shared URLs
-    const folderMatch = url.match(/folders\/([a-zA-Z0-9-_]+)/);
-    if (folderMatch) return folderMatch[1];
+    try {
+      // Handle different URL formats
+      const urlStr = decodeURIComponent(url);
+      
+      // Format: /drive/u/0/folders/FOLDER_ID
+      const driveMatch = urlStr.match(/drive\/(?:u\/\d+\/)?folders\/([a-zA-Z0-9-_]+)/);
+      if (driveMatch) return driveMatch[1];
+      
+      // Format: /folders/FOLDER_ID
+      const folderMatch = urlStr.match(/folders\/([a-zA-Z0-9-_]+)/);
+      if (folderMatch) return folderMatch[1];
 
-    const shareMatch = url.match(/d\/([a-zA-Z0-9-_]+)/);
-    if (shareMatch) return shareMatch[1];
+      // Format: /d/FOLDER_ID
+      const shareMatch = urlStr.match(/d\/([a-zA-Z0-9-_]+)/);
+      if (shareMatch) return shareMatch[1];
 
-    throw new Error("Invalid Google Drive URL format");
+      throw new Error("Could not find folder ID in URL");
+    } catch (error) {
+      console.error("URL parsing error:", error);
+      throw new Error("Invalid Google Drive URL format");
+    }
   }
 
   async scanDirectory(url: string): Promise<number> {
