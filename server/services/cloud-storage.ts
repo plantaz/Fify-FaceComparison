@@ -113,22 +113,31 @@ export class GoogleDriveProvider implements CloudStorageProvider {
 
       const data = await response.json();
       
-      // Download each image
-      for (const file of data.files) {
-        const imageResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.GOOGLE_DRIVE_API_KEY}`
+      // Download images in parallel with size limit
+      const downloadPromises = data.files.map(async (file) => {
+        try {
+          const imageResponse = await fetch(
+            `https://lh3.googleusercontent.com/d/${file.id}=s1000`,
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.GOOGLE_DRIVE_API_KEY}`
+              }
             }
+          );
+          
+          if (imageResponse.ok) {
+            const arrayBuffer = await imageResponse.arrayBuffer();
+            return { buffer: Buffer.from(arrayBuffer) };
           }
-        );
-        
-        if (imageResponse.ok) {
-          const arrayBuffer = await imageResponse.arrayBuffer();
-          images.push({ buffer: Buffer.from(arrayBuffer) });
+          return null;
+        } catch (error) {
+          console.error(`Failed to download image ${file.id}:`, error);
+          return null;
         }
-      }
+      });
+
+      const downloadedImages = await Promise.all(downloadPromises);
+      images.push(...downloadedImages.filter((img): img is { buffer: Buffer } => img !== null));
 
       pageToken = data.nextPageToken;
     } while (pageToken);
