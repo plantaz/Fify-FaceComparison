@@ -22,7 +22,8 @@ export default function Home() {
           <FaceUpload 
             jobId={scanJob.id} 
             imageCount={scanJob.imageCount}
-            onAnalysisComplete={() => setAnalysisComplete(true)} 
+            onAnalysisComplete={() => setAnalysisComplete(true)}
+            setScanJob={setScanJob}
           />
         )}
 

@@ -11,6 +11,7 @@ interface FaceUploadProps {
   jobId: number;
   imageCount: number;
   onAnalysisComplete: () => void;
+  setScanJob: (job: ScanJob | null) => void;
 }
 
 export default function FaceUpload({ jobId, imageCount, onAnalysisComplete }: FaceUploadProps) {
