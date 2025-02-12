@@ -2,6 +2,7 @@ import { DriveUrlInput } from "@shared/schema";
 
 export interface CloudStorageProvider {
   scanDirectory(url: string): Promise<number>;
+  getImages(): Promise<Array<{ buffer: Buffer }>>;
 }
 
 export class OneDriveProvider implements CloudStorageProvider {
@@ -77,6 +78,57 @@ export class GoogleDriveProvider implements CloudStorageProvider {
     } while (pageToken);
 
     return imageCount;
+  }
+
+  async getImages(): Promise<Array<{ buffer: Buffer }>> {
+    if (!process.env.GOOGLE_DRIVE_API_KEY) {
+      throw new Error("Google Drive API key not configured");
+    }
+
+    const folderId = this.extractFolderId(this.url);
+    const images: Array<{ buffer: Buffer }> = [];
+    let pageToken = '';
+
+    do {
+      const params = new URLSearchParams({
+        key: process.env.GOOGLE_DRIVE_API_KEY,
+        q: `'${folderId}' in parents and (mimeType contains 'image/jpeg' or mimeType contains 'image/png')`,
+        pageSize: '1000',
+        fields: 'nextPageToken, files(id)',
+        ...(pageToken && { pageToken })
+      });
+
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files?${params}`
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch images from Google Drive');
+      }
+
+      const data = await response.json();
+      
+      // Download each image
+      for (const file of data.files) {
+        const imageResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.GOOGLE_DRIVE_API_KEY}`
+            }
+          }
+        );
+        
+        if (imageResponse.ok) {
+          const arrayBuffer = await imageResponse.arrayBuffer();
+          images.push({ buffer: Buffer.from(arrayBuffer) });
+        }
+      }
+
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+
+    return images;
   }
 }
 

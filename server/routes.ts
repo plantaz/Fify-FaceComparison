@@ -63,14 +63,43 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ error: "No face image provided" });
       }
 
-      // TODO: Actually analyze images - mocked for now
-      const mockResults = Array.from({ length: job.imageCount }, (_, i) => ({
-        imageId: i + 1,
-        similarity: Math.random() * 100,
-        matched: Math.random() > 0.7
+      const referenceImage = req.file?.buffer;
+      if (!referenceImage) {
+        return res.status(400).json({ error: "Reference image buffer not found" });
+      }
+
+      // Get the storage provider to fetch target images
+      const provider = createStorageProvider(job.driveUrl);
+      const images = await provider.getImages();
+
+      // Compare faces in each image
+      const results = await Promise.all(images.map(async (image, index) => {
+        try {
+          const command = new CompareFacesCommand({
+            SourceImage: { Bytes: referenceImage },
+            TargetImage: { Bytes: image.buffer },
+            SimilarityThreshold: 70
+          });
+
+          const response = await rekognition.send(command);
+          const bestMatch = response.FaceMatches?.[0];
+
+          return {
+            imageId: index + 1,
+            similarity: bestMatch?.Similarity || 0,
+            matched: !!bestMatch
+          };
+        } catch (error) {
+          console.error(`Face comparison error for image ${index + 1}:`, error);
+          return {
+            imageId: index + 1,
+            similarity: 0,
+            matched: false
+          };
+        }
       }));
 
-      const updatedJob = await storage.updateScanJobResults(jobId, mockResults);
+      const updatedJob = await storage.updateScanJobResults(jobId, results);
       res.json(updatedJob);
 
     } catch (error) {
