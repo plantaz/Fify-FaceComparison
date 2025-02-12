@@ -59,12 +59,10 @@ export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setS
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
-      <div className="text-center">
-        <h2 className="text-2xl font-bold mb-2">
-          Found {imageCount} Images
-        </h2>
-        <p className="text-muted-foreground">
-          Upload a face photo to search through them
+      <div className="text-center mb-8">
+        <p className="text-lg font-semibold mb-2">Found {imageCount} Images</p>
+        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+          Upload a clear front-facing photo showing the entire face. Best results come from well-lit photos without sunglasses or masks.
         </p>
       </div>
 
@@ -78,7 +76,7 @@ export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setS
       >
         <input {...getInputProps()} />
         <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        
+
         {file ? (
           <p className="text-sm">{file.name}</p>
         ) : (
