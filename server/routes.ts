@@ -2,12 +2,12 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { driveUrlSchema, insertScanJobSchema } from "@shared/schema";
+import { isDevelopment } from "@shared/config";
 import multer from "multer";
 import { 
   RekognitionClient, 
   CompareFacesCommand 
 } from "@aws-sdk/client-rekognition";
-import { createStorageProvider } from "./services/cloud-storage";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -15,25 +15,25 @@ const upload = multer({
 });
 
 export function registerRoutes(app: Express): Server {
-  if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
-    throw new Error("AWS credentials not configured");
-  }
-  
-  const rekognition = new RekognitionClient({ 
-    region: process.env.AWS_REGION || "us-east-1",
-    credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-    }
-  });
-
   app.post("/api/scan", async (req, res) => {
     try {
-      const { url } = driveUrlSchema.parse(req.body);
+      const { url, googleApiKey } = driveUrlSchema.extend({
+        googleApiKey: isDevelopment ? z.string().optional() : z.string()
+      }).parse(req.body);
+
       const driveType = url.includes('onedrive') ? 'onedrive' : 'gdrive';
 
+      // Set API key based on environment
+      const apiKey = isDevelopment 
+        ? process.env.GOOGLE_DRIVE_API_KEY 
+        : googleApiKey;
+
+      if (!apiKey) {
+        throw new Error("Google Drive API key not configured");
+      }
+
       // Create appropriate storage provider
-      const provider = createStorageProvider(url);
+      const provider = createStorageProvider(url, apiKey);
 
       try {
         // Get actual image count from the drive
@@ -64,6 +64,8 @@ export function registerRoutes(app: Express): Server {
   app.post("/api/analyze/:jobId", upload.single('face'), async (req, res) => {
     try {
       const jobId = parseInt(req.params.jobId);
+      const { awsAccessKeyId, awsSecretAccessKey } = req.body;
+
       const job = await storage.getScanJob(jobId);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
@@ -73,14 +75,33 @@ export function registerRoutes(app: Express): Server {
         return res.status(400).json({ error: "No face image provided" });
       }
 
-      const referenceImage = req.file?.buffer;
+      // Configure AWS credentials based on environment
+      const credentials = {
+        accessKeyId: isDevelopment ? process.env.AWS_ACCESS_KEY_ID! : awsAccessKeyId,
+        secretAccessKey: isDevelopment ? process.env.AWS_SECRET_ACCESS_KEY! : awsSecretAccessKey
+      };
+
+      if (!credentials.accessKeyId || !credentials.secretAccessKey) {
+        return res.status(400).json({ error: "AWS credentials not provided" });
+      }
+
+      const rekognition = new RekognitionClient({ 
+        region: "us-east-1",
+        credentials
+      });
+
+      const referenceImage = req.file.buffer;
       if (!referenceImage) {
         return res.status(400).json({ error: "Reference image buffer not found" });
       }
 
       // Get the storage provider to fetch target images
-      const provider = createStorageProvider(job.driveUrl);
-      await provider.scanDirectory(job.driveUrl); // This sets the URL in the provider
+      const provider = createStorageProvider(
+        job.driveUrl,
+        isDevelopment ? process.env.GOOGLE_DRIVE_API_KEY! : req.body.googleApiKey
+      );
+
+      await provider.scanDirectory(job.driveUrl);
       const images = await provider.getImages();
 
       // Compare faces in each image
