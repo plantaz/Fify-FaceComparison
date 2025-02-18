@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
+import { getTranslation } from "@shared/translations";
 import { DOCUMENTATION_LINKS } from "@shared/config";
 
 const awsCredentialsSchema = z.object({
@@ -23,6 +25,7 @@ interface AwsCredentialsFormProps {
 export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
   const [showAccessKey, setShowAccessKey] = useState(false);
   const [showSecretKey, setShowSecretKey] = useState(false);
+  const { language } = useLanguage();
 
   const form = useForm<AwsCredentials>({
     resolver: zodResolver(awsCredentialsSchema),
@@ -38,7 +41,7 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-sm font-medium flex items-center gap-2">
-              AWS Access Key ID
+              {getTranslation("awsAccessKey.label", language)}
               <a
                 href={DOCUMENTATION_LINKS.awsCredentials}
                 target="_blank"
@@ -52,7 +55,7 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
           <div className="relative">
             <Input
               type={showAccessKey ? "text" : "password"}
-              placeholder="Enter AWS Access Key ID"
+              placeholder={getTranslation("awsAccessKey.placeholder", language)}
               {...form.register("awsAccessKeyId")}
             />
             <Button
@@ -72,7 +75,7 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
             <Alert variant="destructive" className="mt-2">
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                {form.formState.errors.awsAccessKeyId.message}
+                {getTranslation("awsAccessKey.required", language)}
               </AlertDescription>
             </Alert>
           )}
@@ -81,7 +84,7 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-sm font-medium flex items-center gap-2">
-              AWS Secret Access Key
+              {getTranslation("awsSecretKey.label", language)}
               <a
                 href={DOCUMENTATION_LINKS.awsCredentials}
                 target="_blank"
@@ -95,7 +98,7 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
           <div className="relative">
             <Input
               type={showSecretKey ? "text" : "password"}
-              placeholder="Enter AWS Secret Access Key"
+              placeholder={getTranslation("awsSecretKey.placeholder", language)}
               {...form.register("awsSecretAccessKey")}
             />
             <Button
@@ -115,7 +118,7 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
             <Alert variant="destructive" className="mt-2">
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                {form.formState.errors.awsSecretAccessKey.message}
+                {getTranslation("awsSecretKey.required", language)}
               </AlertDescription>
             </Alert>
           )}

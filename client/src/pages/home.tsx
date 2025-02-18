@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useLanguage } from "@/lib/language-context";
+import { getTranslation } from "@shared/translations";
 import HeroSection from "@/components/hero-section";
 import UrlForm from "@/components/url-form";
 import FaceUpload from "@/components/face-upload";
@@ -8,6 +10,7 @@ import { type ScanJob } from "@shared/schema";
 export default function Home() {
   const [scanJob, setScanJob] = useState<ScanJob | null>(null);
   const [analysisComplete, setAnalysisComplete] = useState(false);
+  const { language } = useLanguage();
 
   return (
     <div className="min-h-screen bg-background">
@@ -28,7 +31,15 @@ export default function Home() {
         )}
 
         {scanJob && analysisComplete && (
-          <ResultsDisplay results={scanJob.results || []} />
+          <ResultsDisplay 
+            results={scanJob.results as Array<{
+              imageId: number;
+              similarity: number;
+              matched: boolean;
+              url: string;
+              driveUrl: string;
+            }>} 
+          />
         )}
       </main>
     </div>

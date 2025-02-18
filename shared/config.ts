@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 export const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "production"]).default("development")
+  NODE_ENV: z.enum(["development", "production"]).default("development"),
+  IS_PRODUCTION: z.boolean().default(false)
 });
 
 export const credentialsSchema = z.object({
@@ -12,7 +13,8 @@ export const credentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof credentialsSchema>;
 
-export const isDevelopment = process.env.NODE_ENV !== "production";
+export const isProduction = process.env.IS_PRODUCTION === "true";
+export const isDevelopment = !isProduction;
 
 // Links for documentation
 export const DOCUMENTATION_LINKS = {

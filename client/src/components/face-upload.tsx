@@ -6,6 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { Upload } from "lucide-react";
+import { type ScanJob } from "@shared/schema";
+import { useLanguage } from "@/lib/language-context";
+import { getTranslation } from "@shared/translations";
+import { isProduction } from "@shared/config";
+import { AwsCredentialsForm } from "./aws-credentials-form";
 
 interface FaceUploadProps {
   jobId: number;
@@ -17,6 +22,8 @@ interface FaceUploadProps {
 export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setScanJob }: FaceUploadProps) {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
+  const { language } = useLanguage();
+  const [awsCredentials, setAwsCredentials] = useState<{ awsAccessKeyId: string; awsSecretAccessKey: string } | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFile(acceptedFiles[0]);
@@ -36,6 +43,12 @@ export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setS
       if (!file) return;
       const formData = new FormData();
       formData.append('face', file);
+
+      if (isProduction && awsCredentials) {
+        formData.append('awsAccessKeyId', awsCredentials.awsAccessKeyId);
+        formData.append('awsSecretAccessKey', awsCredentials.awsSecretAccessKey);
+      }
+
       const res = await fetch(`/api/analyze/${jobId}`, {
         method: 'POST',
         body: formData,
@@ -51,18 +64,32 @@ export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setS
     onError: (error) => {
       toast({
         variant: "destructive",
-        title: "Error",
+        title: getTranslation("error.generic", language),
         description: error.message
       });
     }
   });
 
+  const handleAnalyze = () => {
+    if (isProduction && !awsCredentials) {
+      toast({
+        variant: "destructive",
+        title: getTranslation("error.credentials", language),
+        description: getTranslation("error.credentials", language)
+      });
+      return;
+    }
+    analyzeMutation.mutate();
+  };
+
   return (
     <div className="max-w-xl mx-auto space-y-6">
       <div className="text-center mb-8">
-        <p className="text-lg font-semibold mb-2">Found {imageCount} Images</p>
+        <p className="text-lg font-semibold mb-2">
+          {getTranslation("foundImages", language).replace("{count}", String(imageCount))}
+        </p>
         <p className="text-sm text-muted-foreground max-w-md mx-auto">
-          Upload a clear front-facing photo showing the entire face. Best results come from well-lit photos without sunglasses or masks.
+          {getTranslation("uploadInstructions", language)}
         </p>
       </div>
 
@@ -81,18 +108,25 @@ export default function FaceUpload({ jobId, imageCount, onAnalysisComplete, setS
           <p className="text-sm">{file.name}</p>
         ) : (
           <p className="text-muted-foreground">
-            Drag & drop a face photo or click to select
+            {getTranslation("dropzoneText", language)}
           </p>
         )}
       </div>
 
-      {file && (
+      {isProduction && file && !awsCredentials && (
+        <AwsCredentialsForm onSubmit={setAwsCredentials} />
+      )}
+
+      {file && (!isProduction || awsCredentials) && (
         <Button
           className="w-full"
-          onClick={() => analyzeMutation.mutate()}
+          onClick={handleAnalyze}
           disabled={analyzeMutation.isPending}
         >
-          {analyzeMutation.isPending ? "Analyzing..." : "Start Analysis"}
+          {analyzeMutation.isPending 
+            ? getTranslation("analyze.loading", language)
+            : getTranslation("analyze.button", language)
+          }
         </Button>
       )}
 

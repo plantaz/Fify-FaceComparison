@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { driveUrlSchema, type DriveUrlInput } from "@shared/schema";
-import { isDevelopment, DOCUMENTATION_LINKS } from "@shared/config";
+import { isProduction, isDevelopment, DOCUMENTATION_LINKS } from "@shared/config";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Form } from "@/components/ui/form";
@@ -11,6 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { AlertCircle, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useState } from "react";
+import { useLanguage } from "@/lib/language-context";
+import { getTranslation } from "@shared/translations";
 import * as z from 'zod';
 
 interface UrlFormProps {
@@ -25,13 +27,14 @@ interface FormData extends DriveUrlInput {
 export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlFormProps) {
   const { toast } = useToast();
   const [showApiKey, setShowApiKey] = useState(false);
+  const { language } = useLanguage();
 
   const form = useForm<FormData>({
     resolver: zodResolver(
       driveUrlSchema.extend({
-        googleApiKey: isDevelopment 
-          ? z.string().optional()
-          : z.string().min(1, "Google API Key is required")
+        googleApiKey: isProduction 
+          ? z.string().min(1, getTranslation("googleApiKey.required", language))
+          : z.string().optional()
       })
     ),
     defaultValues: { 
@@ -49,12 +52,12 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
       if (data.imageCount === 0) {
         toast({
           variant: "default",
-          title: "No Images Found",
-          description: "The provided directory doesn't contain any compatible images."
+          title: getTranslation("noImages.title", language),
+          description: getTranslation("noImages.description", language)
         });
         return;
       }
-      if (!isDevelopment && onCredentialsSubmit) {
+      if (isProduction && onCredentialsSubmit) {
         onCredentialsSubmit(form.getValues("googleApiKey") || "");
       }
       onScanComplete(data);
@@ -63,10 +66,10 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
       const isCredentialsError = error.message.includes('credentials not configured');
       toast({
         variant: "destructive",
-        title: isCredentialsError ? "Missing API Credentials" : "Error",
-        description: isCredentialsError 
-          ? "Cloud storage access is not properly configured. Please check your credentials."
-          : error.message
+        title: isCredentialsError 
+          ? getTranslation("error.credentials", language)
+          : getTranslation("error.generic", language),
+        description: error.message
       });
     }
   });
@@ -77,15 +80,15 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
         <form onSubmit={form.handleSubmit((data) => scanMutation.mutate(data))}>
           <div className="space-y-4">
             <Input
-              placeholder="Paste your OneDrive or Google Drive URL"
+              placeholder={getTranslation("url.placeholder", language)}
               {...form.register("url")}
             />
 
-            {!isDevelopment && (
+            {isProduction && (
               <div className="relative">
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-sm font-medium flex items-center gap-2">
-                    Google API Key
+                    {getTranslation("googleApiKey.label", language)}
                     <a 
                       href={DOCUMENTATION_LINKS.googleApiKey}
                       target="_blank"
@@ -99,7 +102,7 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
                 <div className="relative">
                   <Input
                     type={showApiKey ? "text" : "password"}
-                    placeholder="Enter your Google API Key"
+                    placeholder={getTranslation("googleApiKey.placeholder", language)}
                     {...form.register("googleApiKey")}
                   />
                   <Button
@@ -141,7 +144,10 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
               className="w-full"
               disabled={scanMutation.isPending}
             >
-              {scanMutation.isPending ? "Scanning..." : "Start Scanning"}
+              {scanMutation.isPending 
+                ? getTranslation("scan.loading", language)
+                : getTranslation("scan.button", language)
+              }
             </Button>
           </div>
         </form>

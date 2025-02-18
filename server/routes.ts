@@ -88,7 +88,7 @@ export function registerRoutes(app: Express): Server {
       }
 
       const rekognition = new RekognitionClient({ 
-        region: "us-east-1",
+        region: "us-east-1", // Fixed region for both development and production
         credentials
       });
 
