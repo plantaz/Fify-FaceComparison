@@ -3,7 +3,9 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { driveUrlSchema, insertScanJobSchema } from "@shared/schema";
 import { isDevelopment } from "@shared/config";
+import { z } from "zod";
 import multer from "multer";
+import { createStorageProvider } from "./services/cloud-storage";
 import { 
   RekognitionClient, 
   CompareFacesCommand 
@@ -105,7 +107,7 @@ export function registerRoutes(app: Express): Server {
       const images = await provider.getImages();
 
       // Compare faces in each image
-      const results = await Promise.all(images.map(async (image, index) => {
+      const results = await Promise.all(images.map(async (image: { buffer: Buffer; id?: string }, index: number) => {
         try {
           console.log(`Analyzing image ${index + 1}...`);
           const command = new CompareFacesCommand({
