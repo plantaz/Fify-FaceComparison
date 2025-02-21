@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { driveUrlSchema, type DriveUrlInput } from "@shared/schema";
-import { isProduction, isDevelopment, DOCUMENTATION_LINKS } from "@shared/config";
+import { isProduction, DOCUMENTATION_LINKS } from "@shared/config";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Form } from "@/components/ui/form";
@@ -13,10 +13,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { getTranslation } from "@shared/translations";
-import * as z from 'zod';
+import * as z from "zod";
 
 interface UrlFormProps {
-  onScanComplete: (job: any) => void;
+  onScanComplete: (job: any, googleApiKey: string) => void; // Updated to include apiKey
   onCredentialsSubmit?: (googleApiKey: string) => void;
 }
 
@@ -24,7 +24,10 @@ interface FormData extends DriveUrlInput {
   googleApiKey?: string;
 }
 
-export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlFormProps) {
+export default function UrlForm({
+  onScanComplete,
+  onCredentialsSubmit,
+}: UrlFormProps) {
   const { toast } = useToast();
   const [showApiKey, setShowApiKey] = useState(false);
   const { language } = useLanguage();
@@ -32,15 +35,15 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
   const form = useForm<FormData>({
     resolver: zodResolver(
       driveUrlSchema.extend({
-        googleApiKey: isProduction 
+        googleApiKey: isProduction
           ? z.string().min(1, getTranslation("googleApiKey.required", language))
-          : z.string().optional()
-      })
+          : z.string().optional(),
+      }),
     ),
-    defaultValues: { 
+    defaultValues: {
       url: "",
-      googleApiKey: "" 
-    }
+      googleApiKey: "",
+    },
   });
 
   const scanMutation = useMutation({
@@ -53,43 +56,65 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
         toast({
           variant: "default",
           title: getTranslation("noImages.title", language),
-          description: getTranslation("noImages.description", language)
+          description: getTranslation("noImages.description", language),
         });
         return;
       }
       if (isProduction && onCredentialsSubmit) {
-        onCredentialsSubmit(form.getValues("googleApiKey") || "");
+        onCredentialsSubmit(form.getValues("googleApiKey") || ""); // Pass Google API Key
       }
-      onScanComplete(data);
+      onScanComplete(data, form.getValues("googleApiKey") || ""); // Pass the API key here
     },
     onError: (error: Error) => {
-      const isCredentialsError = error.message.includes('credentials not configured');
+      const isCredentialsError = error.message.includes(
+        "credentials not configured",
+      );
       toast({
         variant: "destructive",
-        title: isCredentialsError 
+        title: isCredentialsError
           ? getTranslation("error.credentials", language)
           : getTranslation("error.generic", language),
-        description: error.message
+        description: error.message,
       });
-    }
+    },
   });
 
   return (
     <div className="max-w-xl mx-auto">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit((data) => scanMutation.mutate(data))}>
+        <form
+          onSubmit={form.handleSubmit((data) => {
+            console.log("Submitting with data:", data); // Log the submitted data
+            scanMutation.mutate(data);
+          })}
+        >
           <div className="space-y-4">
             <Input
               placeholder={getTranslation("url.placeholder", language)}
               {...form.register("url")}
             />
-
+            {form.formState.errors.url && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {form.formState.errors.url.message}
+                </AlertDescription>
+              </Alert>
+            )}
+            {form.formState.errors.googleApiKey && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {form.formState.errors.googleApiKey.message}
+                </AlertDescription>
+              </Alert>
+            )}
             {isProduction && (
               <div className="relative">
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-sm font-medium flex items-center gap-2">
                     {getTranslation("googleApiKey.label", language)}
-                    <a 
+                    <a
                       href={DOCUMENTATION_LINKS.googleApiKey}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -102,7 +127,10 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
                 <div className="relative">
                   <Input
                     type={showApiKey ? "text" : "password"}
-                    placeholder={getTranslation("googleApiKey.placeholder", language)}
+                    placeholder={getTranslation(
+                      "googleApiKey.placeholder",
+                      language,
+                    )}
                     {...form.register("googleApiKey")}
                   />
                   <Button
@@ -120,34 +148,14 @@ export default function UrlForm({ onScanComplete, onCredentialsSubmit }: UrlForm
                 </div>
               </div>
             )}
-
-            {form.formState.errors.url && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {form.formState.errors.url.message}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {form.formState.errors.googleApiKey && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {form.formState.errors.googleApiKey.message}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="w-full"
               disabled={scanMutation.isPending}
             >
-              {scanMutation.isPending 
+              {scanMutation.isPending
                 ? getTranslation("scan.loading", language)
-                : getTranslation("scan.button", language)
-              }
+                : getTranslation("scan.button", language)}
             </Button>
           </div>
         </form>
