@@ -16,6 +16,11 @@ if (!fs.existsSync(publicDir)) {
 console.log('Building client...');
 execSync('vite build', { stdio: 'inherit' });
 
+console.log('Ensuring server/public directory exists...');
+if (!fs.existsSync(publicDir)) {
+  fs.mkdirSync(publicDir, { recursive: true });
+}
+
 console.log('Copying build files...');
 fs.cpSync(path.join(__dirname, '..', 'dist', 'public'), publicDir, { recursive: true, force: true });
 
