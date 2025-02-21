@@ -5,6 +5,10 @@ export type Language = z.infer<typeof Language>;
 
 export const translations = {
   "en": {
+    // Hero section
+    "hero.title": "Search in public directory of multiple images for specific faces using AI Recognition!",
+    "hero.subtitle": "First, provide a link from Google Drive or Microsoft OneDrive.",
+    
     // Forms and inputs
     "url.placeholder": "Paste your OneDrive or Google Drive URL",
     "url.validation": "URL must be from OneDrive or Google Drive",
@@ -40,6 +44,10 @@ export const translations = {
     "results.similarity": "Similarity: {similarity}%"
   },
   "pt-BR": {
+    // Hero section
+    "hero.title": "Pesquise em diretório público de múltiplas imagens por rostos específicos usando Reconhecimento por IA!",
+    "hero.subtitle": "Primeiro, forneça um link do Google Drive ou Microsoft OneDrive.",
+    
     // Forms and inputs
     "url.placeholder": "Cole a URL do OneDrive ou Google Drive",
     "url.validation": "A URL deve ser do OneDrive ou Google Drive",
