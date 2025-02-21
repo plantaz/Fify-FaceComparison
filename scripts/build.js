@@ -14,13 +14,9 @@ if (!fs.existsSync(publicDir)) {
 }
 
 console.log('Building client...');
-execSync('npm run build', { stdio: 'inherit' });
+execSync('vite build --outDir ../server/public', { stdio: 'inherit' });
 
-// Copy dist contents to server/public
-const distDir = path.join(__dirname, '..', 'dist');
-if (fs.existsSync(distDir)) {
-  console.log('Copying build files to server/public...');
-  fs.cpSync(distDir, publicDir, { recursive: true });
-}
+console.log('Building server...');
+execSync('esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist', { stdio: 'inherit' });
 
 console.log('Build complete!');
