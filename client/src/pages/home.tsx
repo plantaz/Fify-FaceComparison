@@ -1,57 +1,37 @@
 import { useState } from "react";
-import { useLanguage } from "@/lib/language-context";
-import { getTranslation } from "@shared/translations";
-import HeroSection from "@/components/hero-section";
+import { type ScanJob } from "@shared/schema";
 import UrlForm from "@/components/url-form";
 import FaceUpload from "@/components/face-upload";
 import ResultsDisplay from "@/components/results-display";
-import { type ScanJob } from "@shared/schema";
+import HeroSection from "@/components/hero-section";
 
 export default function Home() {
   const [scanJob, setScanJob] = useState<ScanJob | null>(null);
-  const [analysisComplete, setAnalysisComplete] = useState(false);
-  const { language } = useLanguage();
+  const [googleApiKey, setGoogleApiKey] = useState<string>("");
+  const [isAnalysisComplete, setIsAnalysisComplete] = useState(false);
+
+  const handleScanComplete = (job: ScanJob, apiKey: string) => {
+    console.log("Scan complete with API key:", apiKey); // Debug log
+    setScanJob(job);
+    setGoogleApiKey(apiKey);
+  };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="container py-8 space-y-8">
       <HeroSection />
-
-      <main className="container mx-auto px-4 py-8">
-        {!scanJob && (
-          <UrlForm onScanComplete={setScanJob} />
-        )}
-
-        {scanJob && !analysisComplete && (
-          <FaceUpload 
-            jobId={scanJob.id} 
-            imageCount={scanJob.imageCount}
-            onAnalysisComplete={() => setAnalysisComplete(true)}
-            setScanJob={setScanJob}
-          />
-        )}
-
-        {scanJob && analysisComplete && (
-          <ResultsDisplay 
-            results={scanJob.results as Array<{
-              imageId: number;
-              similarity: number;
-              matched: boolean;
-              url: string;
-              driveUrl: string;
-            }>} 
-          />
-        )}
-      </main>
-      <footer className="container mx-auto px-4 py-8 text-center text-sm text-muted-foreground">
-        <a 
-          href="https://github.com/plantaz/Fify-FaceComparison" 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="hover:text-primary"
-        >
-          Want to contribute? Check out our GitHub repository!
-        </a>
-      </footer>
+      {!scanJob ? (
+        <UrlForm onScanComplete={handleScanComplete} />
+      ) : !isAnalysisComplete ? (
+        <FaceUpload
+          jobId={scanJob.id}
+          imageCount={scanJob.imageCount}
+          onAnalysisComplete={() => setIsAnalysisComplete(true)}
+          setScanJob={setScanJob}
+          googleApiKey={googleApiKey}
+        />
+      ) : (
+        <ResultsDisplay scanJob={scanJob} />
+      )}
     </div>
   );
 }

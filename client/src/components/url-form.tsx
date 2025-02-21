@@ -3,7 +3,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { driveUrlSchema, type DriveUrlInput } from "@shared/schema";
 import { isProduction, DOCUMENTATION_LINKS } from "@shared/config";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,18 +15,14 @@ import { getTranslation } from "@shared/translations";
 import * as z from "zod";
 
 interface UrlFormProps {
-  onScanComplete: (job: any, googleApiKey: string) => void; // Updated to include apiKey
-  onCredentialsSubmit?: (googleApiKey: string) => void;
+  onScanComplete: (job: any, googleApiKey: string) => void;
 }
 
 interface FormData extends DriveUrlInput {
-  googleApiKey?: string;
+  googleApiKey: string;
 }
 
-export default function UrlForm({
-  onScanComplete,
-  onCredentialsSubmit,
-}: UrlFormProps) {
+export default function UrlForm({ onScanComplete }: UrlFormProps) {
   const { toast } = useToast();
   const [showApiKey, setShowApiKey] = useState(false);
   const { language } = useLanguage();
@@ -35,10 +30,8 @@ export default function UrlForm({
   const form = useForm<FormData>({
     resolver: zodResolver(
       driveUrlSchema.extend({
-        googleApiKey: isProduction
-          ? z.string().min(1, getTranslation("googleApiKey.required", language))
-          : z.string().optional(),
-      }),
+        googleApiKey: z.string().min(1, getTranslation("googleApiKey.required", language))
+      })
     ),
     defaultValues: {
       url: "",
@@ -48,10 +41,18 @@ export default function UrlForm({
 
   const scanMutation = useMutation({
     mutationFn: async (data: FormData) => {
-      const res = await apiRequest("POST", "/api/scan", data);
+      console.log("Scanning with API key:", data.googleApiKey); // Debug log
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       if (data.imageCount === 0) {
         toast({
           variant: "default",
@@ -60,106 +61,78 @@ export default function UrlForm({
         });
         return;
       }
-      if (isProduction && onCredentialsSubmit) {
-        onCredentialsSubmit(form.getValues("googleApiKey") || ""); // Pass Google API Key
-      }
-      onScanComplete(data, form.getValues("googleApiKey") || ""); // Pass the API key here
+      onScanComplete(data, variables.googleApiKey);
     },
     onError: (error: Error) => {
-      const isCredentialsError = error.message.includes(
-        "credentials not configured",
-      );
       toast({
         variant: "destructive",
-        title: isCredentialsError
-          ? getTranslation("error.credentials", language)
-          : getTranslation("error.generic", language),
+        title: getTranslation("error.generic", language),
         description: error.message,
       });
     },
   });
 
   return (
-    <div className="max-w-xl mx-auto">
-      <Form {...form}>
-        <form
-          onSubmit={form.handleSubmit((data) => {
-            console.log("Submitting with data:", data); // Log the submitted data
-            scanMutation.mutate(data);
-          })}
-        >
-          <div className="space-y-4">
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit((data) => scanMutation.mutate(data))} className="space-y-4">
+        <Input
+          placeholder={getTranslation("url.placeholder", language)}
+          {...form.register("url")}
+        />
+        {form.formState.errors.url && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {form.formState.errors.url.message}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <div className="relative">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm font-medium flex items-center gap-2">
+              {getTranslation("googleApiKey.label", language)}
+              <a
+                href={DOCUMENTATION_LINKS.googleApiKey}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-500 hover:text-blue-600"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </label>
+          </div>
+          <div className="relative">
             <Input
-              placeholder={getTranslation("url.placeholder", language)}
-              {...form.register("url")}
+              type={showApiKey ? "text" : "password"}
+              placeholder={getTranslation("googleApiKey.placeholder", language)}
+              {...form.register("googleApiKey")}
             />
-            {form.formState.errors.url && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {form.formState.errors.url.message}
-                </AlertDescription>
-              </Alert>
-            )}
-            {form.formState.errors.googleApiKey && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {form.formState.errors.googleApiKey.message}
-                </AlertDescription>
-              </Alert>
-            )}
-            {isProduction && (
-              <div className="relative">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium flex items-center gap-2">
-                    {getTranslation("googleApiKey.label", language)}
-                    <a
-                      href={DOCUMENTATION_LINKS.googleApiKey}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-500 hover:text-blue-600"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
-                  </label>
-                </div>
-                <div className="relative">
-                  <Input
-                    type={showApiKey ? "text" : "password"}
-                    placeholder={getTranslation(
-                      "googleApiKey.placeholder",
-                      language,
-                    )}
-                    {...form.register("googleApiKey")}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="absolute right-2 top-1/2 -translate-y-1/2"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                  >
-                    {showApiKey ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )}
             <Button
-              type="submit"
-              className="w-full"
-              disabled={scanMutation.isPending}
+              type="button"
+              variant="ghost"
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              onClick={() => setShowApiKey(!showApiKey)}
             >
-              {scanMutation.isPending
-                ? getTranslation("scan.loading", language)
-                : getTranslation("scan.button", language)}
+              {showApiKey ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
             </Button>
           </div>
-        </form>
-      </Form>
-    </div>
+        </div>
+
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={scanMutation.isPending}
+        >
+          {scanMutation.isPending
+            ? getTranslation("scan.loading", language)
+            : getTranslation("scan.button", language)}
+        </Button>
+      </form>
+    </Form>
   );
 }
