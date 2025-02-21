@@ -16,8 +16,8 @@ interface ResultsDisplayProps {
 
 function downloadCSV(results: Result[]) {
   const matchedResults = results.filter(r => r.matched);
-  const csvContent = "Photo URL,Google Drive URL\n" + 
-    matchedResults.map(r => `${r.url},${r.driveUrl}`).join("\n");
+  const csvContent = "Photo URL,Google Drive URL,Similarity %\n" + 
+    matchedResults.map(r => `${r.url},${r.driveUrl},${r.similarity.toFixed(1)}`).join("\n");
 
   const blob = new Blob([csvContent], { type: 'text/csv' });
   const url = window.URL.createObjectURL(blob);

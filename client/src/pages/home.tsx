@@ -42,6 +42,16 @@ export default function Home() {
           />
         )}
       </main>
+      <footer className="container mx-auto px-4 py-8 text-center text-sm text-muted-foreground">
+        <a 
+          href="https://github.com/plantaz/Fify-FaceComparison" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="hover:text-primary"
+        >
+          Want to contribute? Check out our GitHub repository!
+        </a>
+      </footer>
     </div>
   );
 }

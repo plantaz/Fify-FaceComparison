@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/lib/language-context";
-import { SiGoogletranslate } from "react-icons/si";
+import ReactCountryFlag from "react-country-flag";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +15,11 @@ export function LanguageSelector() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="w-9 px-0">
-          <SiGoogletranslate className="h-4 w-4" />
+          <ReactCountryFlag 
+            countryCode={language === 'pt-BR' ? 'BR' : 'US'} 
+            style={{ width: '1.5em', height: '1.5em' }} 
+            svg 
+          />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
