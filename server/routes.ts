@@ -98,9 +98,18 @@ export function registerRoutes(app: Express): Server {
       }
 
       // Get the storage provider to fetch target images
+      // Get API key based on environment
+      const googleApiKey = isDevelopment 
+        ? process.env.GOOGLE_DRIVE_API_KEY 
+        : req.body.googleApiKey;
+
+      if (!googleApiKey) {
+        return res.status(400).json({ error: "Google Drive API key is required" });
+      }
+
       const provider = createStorageProvider(
         job.driveUrl,
-        isDevelopment ? process.env.GOOGLE_DRIVE_API_KEY! : req.body.googleApiKey
+        googleApiKey
       );
 
       await provider.scanDirectory(job.driveUrl);
