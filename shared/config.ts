@@ -1,3 +1,4 @@
+
 import { z } from "zod";
 
 export const envSchema = z.object({
@@ -13,8 +14,8 @@ export const credentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof credentialsSchema>;
 
-export const isProduction = process.env.IS_PRODUCTION === "true";
-export const isDevelopment = !isProduction;
+export const isProduction = import.meta.env.PROD;
+export const isDevelopment = import.meta.env.DEV;
 
 // Links for documentation
 export const DOCUMENTATION_LINKS = {
