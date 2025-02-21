@@ -1,3 +1,4 @@
+
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -15,8 +16,8 @@ if (!fs.existsSync(publicDir)) {
 console.log('Building client...');
 execSync('npm run build', { stdio: 'inherit' });
 
-// Copy dist/public contents to server/public
-const distDir = path.join(__dirname, '..', 'dist', 'public');
+// Copy dist contents to server/public
+const distDir = path.join(__dirname, '..', 'dist');
 if (fs.existsSync(distDir)) {
   console.log('Copying build files to server/public...');
   fs.cpSync(distDir, publicDir, { recursive: true });
