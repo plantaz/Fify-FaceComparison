@@ -123,6 +123,13 @@ export function AwsCredentialsForm({ onSubmit }: AwsCredentialsFormProps) {
             </Alert>
           )}
         </div>
+
+        <Button 
+          type="submit" 
+          className="w-full mt-4"
+        >
+          {getTranslation("submit", language)}
+        </Button>
       </form>
     </Form>
   );
