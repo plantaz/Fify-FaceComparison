@@ -14,8 +14,14 @@ export const credentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof credentialsSchema>;
 
-export const isProduction = import.meta.env.PROD;
-export const isDevelopment = import.meta.env.DEV;
+// Check if we're in a browser environment
+const isBrowser = typeof window !== 'undefined';
+
+// Use the appropriate environment variables based on the environment
+export const isProduction = isBrowser 
+  ? import.meta.env?.PROD ?? false
+  : process.env.NODE_ENV === 'production';
+export const isDevelopment = !isProduction;
 
 // Links for documentation
 export const DOCUMENTATION_LINKS = {
