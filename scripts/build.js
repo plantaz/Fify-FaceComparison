@@ -17,7 +17,7 @@ console.log('Building client...');
 execSync('vite build', { stdio: 'inherit' });
 
 console.log('Copying build files...');
-fs.cpSync(path.join(__dirname, '..', 'dist', 'public'), publicDir, { recursive: true });
+fs.cpSync(path.join(__dirname, '..', 'dist', 'public'), publicDir, { recursive: true, force: true });
 
 console.log('Building server...');
 execSync('esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist', { stdio: 'inherit' });
