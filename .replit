@@ -14,7 +14,7 @@ localPort = 5000
 externalPort = 80
 
 [workflows]
-runButton = "Start application"
+runButton = "Production"
 
 [[workflows.workflow]]
 name = "Project"
@@ -39,3 +39,16 @@ task = "packager.installForAll"
 task = "shell.exec"
 args = "npm run build && npm run dev"
 waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Production"
+mode = "sequential"
+author = 39876533
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run build"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run start"
