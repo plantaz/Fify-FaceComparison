@@ -7,11 +7,11 @@ export const translations = {
   "en": {
     // Hero section
     "hero.title": "Search in public directory of multiple images for specific faces using AI Recognition!",
-    "hero.subtitle": "First, provide a link from Google Drive or Microsoft OneDrive.",
+    "hero.subtitle": "First, provide a link from Google Drive.",
     
     // Forms and inputs
-    "url.placeholder": "Paste your OneDrive or Google Drive URL",
-    "url.validation": "URL must be from OneDrive or Google Drive",
+    "url.placeholder": "Paste your Google Drive URL",
+    "url.validation": "URL must be from Google Drive",
     "googleApiKey.label": "Google API Key",
     "googleApiKey.placeholder": "Enter your Google API Key",
     "googleApiKey.required": "Google API Key is required",
@@ -54,11 +54,11 @@ export const translations = {
   "pt-BR": {
     // Hero section
     "hero.title": "Pesquise em diretório público de múltiplas imagens por rostos específicos usando Reconhecimento por IA!",
-    "hero.subtitle": "Primeiro, forneça um link do Google Drive ou Microsoft OneDrive.",
+    "hero.subtitle": "Primeiro, forneça um link do Google Drive.",
     
     // Forms and inputs
-    "url.placeholder": "Cole a URL do OneDrive ou Google Drive",
-    "url.validation": "A URL deve ser do OneDrive ou Google Drive",
+    "url.placeholder": "Cole a URL do Google Drive",
+    "url.validation": "A URL deve ser do Google Drive",
     "googleApiKey.label": "Chave da API do Google",
     "googleApiKey.placeholder": "Digite sua chave da API do Google",
     "googleApiKey.required": "A chave da API do Google é obrigatória",

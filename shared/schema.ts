@@ -5,7 +5,7 @@ import { z } from "zod";
 export const scanJobs = pgTable("scan_jobs", {
   id: serial("id").primaryKey(),
   driveUrl: text("drive_url").notNull(),
-  driveType: text("drive_type").notNull(), // 'onedrive' | 'gdrive'
+  driveType: text("drive_type").notNull(), // 'gdrive'
   imageCount: integer("image_count").notNull(),
   status: text("status").notNull(), // 'pending' | 'scanning' | 'complete' | 'error'
   results: jsonb("results"),
@@ -22,8 +22,8 @@ export const insertScanJobSchema = createInsertSchema(scanJobs).pick({
 
 export const driveUrlSchema = z.object({
   url: z.string().url()
-    .refine(url => url.includes('onedrive') || url.includes('drive.google'), {
-      message: "URL must be from OneDrive or Google Drive"
+    .refine(url => url.includes('drive.google'), {
+      message: "URL must be from Google Drive"
     })
 });
 

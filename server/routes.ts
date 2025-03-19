@@ -31,7 +31,7 @@ export function registerRoutes(app: Express): Server {
         })
         .parse(req.body);
 
-      const driveType = url.includes("onedrive") ? "onedrive" : "gdrive";
+      const driveType = "gdrive";
 
       const apiKey = googleApiKey || (isDevelopment ? process.env.GOOGLE_DRIVE_API_KEY : null);
       console.log("Using API key:", apiKey ? "Present (not shown for security)" : "Missing");

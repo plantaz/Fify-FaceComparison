@@ -1,17 +1,13 @@
-export function validateDriveUrl(url: string): { valid: boolean; type?: 'onedrive' | 'gdrive' } {
+export function validateDriveUrl(url: string): { valid: boolean; type?: 'gdrive' } {
   try {
     const urlObj = new URL(url);
-    
-    if (urlObj.hostname.includes('onedrive')) {
-      return { valid: true, type: 'onedrive' };
-    }
     
     if (urlObj.hostname.includes('drive.google')) {
       return { valid: true, type: 'gdrive' };
     }
     
     return { valid: false };
-  } catch {
+  } catch (e) {
     return { valid: false };
   }
 }

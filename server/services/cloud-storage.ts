@@ -5,24 +5,6 @@ export interface CloudStorageProvider {
   getImages(): Promise<Array<{ buffer: Buffer; id?: string }>>;
 }
 
-export class OneDriveProvider implements CloudStorageProvider {
-  constructor(
-    private clientId: string,
-    private clientSecret: string
-  ) {}
-
-  async scanDirectory(url: string): Promise<number> {
-    if (!process.env.ONEDRIVE_CLIENT_ID || !process.env.ONEDRIVE_CLIENT_SECRET) {
-      throw new Error("OneDrive credentials not configured");
-    }
-    return 0;
-  }
-
-  async getImages(): Promise<Array<{ buffer: Buffer; id?: string }>> {
-    return [];
-  }
-}
-
 export class GoogleDriveProvider implements CloudStorageProvider {
   private url: string;
 
@@ -166,13 +148,6 @@ export class GoogleDriveProvider implements CloudStorageProvider {
 }
 
 export function createStorageProvider(url: string, apiKey?: string): CloudStorageProvider {
-  if (url.includes('onedrive')) {
-    return new OneDriveProvider(
-      process.env.ONEDRIVE_CLIENT_ID!,
-      process.env.ONEDRIVE_CLIENT_SECRET!
-    );
-  }
-
   if (url.includes('drive.google')) {
     if (!apiKey) {
       throw new Error("Google Drive API key not configured");

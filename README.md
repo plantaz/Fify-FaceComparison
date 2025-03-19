@@ -4,7 +4,7 @@ A SaaS platform that helps users find specific faces in their cloud storage dire
 
 ## Features
 
-- Support for Google Drive and OneDrive directories
+- Support for Google Drive directories
 - Face detection and comparison using AWS Rekognition
 - Secure credential handling for both development and production environments
 - Multi-language support (English and Portuguese-BR)
