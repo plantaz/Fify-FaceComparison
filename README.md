@@ -38,7 +38,7 @@ The application will be available at `http://localhost:5000`.
 
 ## Deploying to Netlify
 
-This application can be deployed to Netlify with minimal configuration:
+This application can be deployed to Netlify as a fullstack application using Netlify Functions:
 
 1. Create a new site in Netlify
 2. Connect it to your GitHub repository
@@ -51,19 +51,19 @@ This application can be deployed to Netlify with minimal configuration:
    - `DATABASE_URL`: Your database connection string (e.g. Neon, Supabase)
    - `NODE_ENV`: Set to `development` (we're using development mode for simplicity)
 
-5. Create a file named `netlify.toml` in your repository root with the following content:
+5. Make sure you have the `netlify.toml` file in your repository root with the following content:
 ```toml
 [build]
   command = "npm run build"
   publish = "dist"
-  functions = "dist/functions"
+  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
 
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/index/:splat"
+  to = "/.netlify/functions/api/:splat"
   status = 200
 
 [[redirects]]
@@ -72,7 +72,9 @@ This application can be deployed to Netlify with minimal configuration:
   status = 200
 ```
 
-6. Add this file to your repository and push the changes.
+6. Ensure you have the serverless function set up in `netlify/functions/api.js` that adapts your Express app to Netlify Functions.
+
+7. Push all changes to your repository.
 
 Note: In this configuration, users will need to provide their own Google Drive API key and AWS credentials when using the app, as the application doesn't store these credentials on the server.
 
@@ -107,3 +109,4 @@ For more details on creating API keys and credentials, refer to the official doc
   - AWS Rekognition for face detection
   - PostgreSQL for data storage
   - Drizzle ORM for database operations
+  - Serverless-http for Netlify Functions

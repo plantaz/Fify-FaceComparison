@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { driveUrlSchema } from "@shared/schema";
+import { isDevelopment } from "@shared/config";
 import { z } from "zod";
 import multer from "multer";
 import { createStorageProvider } from "./services/cloud-storage";
@@ -16,7 +17,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 
-export function registerRoutes(app: Express): Server {
+export function registerRoutes(app: Express): void {
   app.post("/api/scan", async (req, res) => {
     try {
       console.log("Received /api/scan request with body:", {
@@ -172,6 +173,6 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  const httpServer = createServer(app);
-  return httpServer;
+  // Return empty for serverless compatibility
+  return;
 }
