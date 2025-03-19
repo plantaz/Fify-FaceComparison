@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { driveUrlSchema, type DriveUrlInput } from "@shared/schema";
-import { isProduction, DOCUMENTATION_LINKS } from "@shared/config";
+import { DOCUMENTATION_LINKS } from "@shared/config";
 import { useMutation } from "@tanstack/react-query";
 import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";

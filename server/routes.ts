@@ -2,7 +2,6 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { driveUrlSchema } from "@shared/schema";
-import { isDevelopment } from "@shared/config";
 import { z } from "zod";
 import multer from "multer";
 import { createStorageProvider } from "./services/cloud-storage";
@@ -27,13 +26,13 @@ export function registerRoutes(app: Express): Server {
       
       const { url, googleApiKey } = driveUrlSchema
         .extend({
-          googleApiKey: isDevelopment ? z.string().optional() : z.string(),
+          googleApiKey: z.string().optional(),
         })
         .parse(req.body);
 
       const driveType = "gdrive";
 
-      const apiKey = googleApiKey || (isDevelopment ? process.env.GOOGLE_DRIVE_API_KEY : null);
+      const apiKey = googleApiKey || process.env.GOOGLE_DRIVE_API_KEY;
       console.log("Using API key:", apiKey ? "Present (not shown for security)" : "Missing");
 
       if (!apiKey) {
@@ -94,12 +93,8 @@ export function registerRoutes(app: Express): Server {
       }
 
       const credentials = {
-        accessKeyId: isDevelopment && process.env.AWS_ACCESS_KEY_ID
-          ? process.env.AWS_ACCESS_KEY_ID
-          : awsAccessKeyId,
-        secretAccessKey: isDevelopment && process.env.AWS_SECRET_ACCESS_KEY
-          ? process.env.AWS_SECRET_ACCESS_KEY
-          : awsSecretAccessKey,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || awsAccessKeyId,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || awsSecretAccessKey,
       };
 
       // Log credentials to confirm they exist
@@ -107,16 +102,12 @@ export function registerRoutes(app: Express): Server {
         !!credentials.accessKeyId && !!credentials.secretAccessKey);
       
       // Check AWS credentials more thoroughly
-      if (!awsAccessKeyId && !process.env.AWS_ACCESS_KEY_ID) {
+      if (!credentials.accessKeyId) {
         return res.status(400).json({ error: "AWS Access Key ID not provided" });
       }
       
-      if (!awsSecretAccessKey && !process.env.AWS_SECRET_ACCESS_KEY) {
+      if (!credentials.secretAccessKey) {
         return res.status(400).json({ error: "AWS Secret Access Key not provided" });
-      }
-      
-      if (!credentials.accessKeyId || !credentials.secretAccessKey) {
-        return res.status(400).json({ error: "AWS credentials not provided" });
       }
 
       const rekognition = new RekognitionClient({

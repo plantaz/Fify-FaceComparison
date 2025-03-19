@@ -8,7 +8,6 @@ import { Upload } from "lucide-react";
 import { type ScanJob } from "@shared/schema";
 import { useLanguage } from "@/lib/language-context";
 import { getTranslation } from "@shared/translations";
-import { isProduction, isDevelopment } from "@shared/config";
 import { AwsCredentialsForm } from "./aws-credentials-form";
 
 interface FaceUploadProps {

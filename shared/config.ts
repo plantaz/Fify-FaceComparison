@@ -1,9 +1,7 @@
-
 import { z } from "zod";
 
 export const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "production"]).default("development"),
-  IS_PRODUCTION: z.boolean().default(false)
+  NODE_ENV: z.enum(["development"]).default("development")
 });
 
 export const credentialsSchema = z.object({
@@ -14,14 +12,8 @@ export const credentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof credentialsSchema>;
 
-// Check if we're in a browser environment
-const isBrowser = typeof window !== 'undefined';
-
-// Use the appropriate environment variables based on the environment
-export const isProduction = isBrowser 
-  ? import.meta.env?.PROD ?? false
-  : process.env.NODE_ENV === 'production';
-export const isDevelopment = !isProduction;
+// Always in development mode
+export const isDevelopment = true;
 
 // Links for documentation
 export const DOCUMENTATION_LINKS = {
