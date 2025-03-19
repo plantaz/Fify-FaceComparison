@@ -70,15 +70,22 @@ export function registerRoutes(app: Express): void {
       const jobId = parseInt(req.params.jobId);
       const { awsAccessKeyId, awsSecretAccessKey, googleApiKey } = req.body;
 
+      // Trim and clean up credential strings
+      const cleanAwsAccessKeyId = awsAccessKeyId?.trim();
+      const cleanAwsSecretAccessKey = awsSecretAccessKey?.trim();
+      const cleanGoogleApiKey = googleApiKey?.trim();
+
       // Enhanced logging for request body and form data
       console.log("Request body keys:", Object.keys(req.body));
-      console.log("AWS Access Key provided:", !!awsAccessKeyId);
-      console.log("AWS Secret Access Key provided:", !!awsSecretAccessKey);
-      console.log("Google API Key provided:", !!googleApiKey);
+      console.log("AWS Access Key provided:", !!cleanAwsAccessKeyId);
+      console.log("AWS Secret Access Key provided:", !!cleanAwsSecretAccessKey);
+      console.log("Google API Key provided:", !!cleanGoogleApiKey);
       console.log("Face image provided:", !!req.file);
+      console.log("AWS key length:", cleanAwsAccessKeyId?.length);
+      console.log("AWS secret length:", cleanAwsSecretAccessKey?.length);
 
       // Ensure the Google API key is provided
-      if (!googleApiKey) {
+      if (!cleanGoogleApiKey) {
         return res
           .status(400)
           .json({ error: "Google Drive API key is required" });
@@ -94,13 +101,17 @@ export function registerRoutes(app: Express): void {
       }
 
       const credentials = {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || awsAccessKeyId,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || awsSecretAccessKey,
+        accessKeyId: (isDevelopment && process.env.AWS_ACCESS_KEY_ID) || cleanAwsAccessKeyId,
+        secretAccessKey: (isDevelopment && process.env.AWS_SECRET_ACCESS_KEY) || cleanAwsSecretAccessKey,
       };
 
       // Log credentials to confirm they exist
-      console.log("AWS Credentials provided:", 
-        !!credentials.accessKeyId && !!credentials.secretAccessKey);
+      console.log("AWS Credentials being used:", {
+        accessKeyPresent: !!credentials.accessKeyId,
+        accessKeyLength: credentials.accessKeyId?.length,
+        secretKeyPresent: !!credentials.secretAccessKey,
+        secretKeyLength: credentials.secretAccessKey?.length,
+      });
       
       // Check AWS credentials more thoroughly
       if (!credentials.accessKeyId) {
@@ -113,8 +124,13 @@ export function registerRoutes(app: Express): void {
 
       const rekognition = new RekognitionClient({
         region: "us-east-1",
-        credentials,
+        credentials: {
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey
+        }
       });
+
+      console.log("Created AWS Rekognition client with region: us-east-1");
 
       const referenceImage = req.file.buffer;
       if (!referenceImage) {
@@ -123,7 +139,7 @@ export function registerRoutes(app: Express): void {
           .json({ error: "Reference image buffer not found" });
       }
 
-      const provider = createStorageProvider(job.driveUrl, googleApiKey);
+      const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
       await provider.scanDirectory(job.driveUrl);
       const images = await provider.getImages();
 
@@ -138,18 +154,43 @@ export function registerRoutes(app: Express): void {
                 SimilarityThreshold: 70,
               });
 
-              const response = await rekognition.send(command);
-              const bestMatch = response.FaceMatches?.[0];
-
-              return {
-                imageId: index + 1,
-                similarity: bestMatch?.Similarity || 0,
-                matched: !!bestMatch,
-                url: image.id
-                  ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
-                  : undefined,
-                driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-              };
+              try {
+                console.log(`Sending AWS Rekognition request for image ${index + 1}`);
+                const response = await rekognition.send(command);
+                console.log(`AWS Rekognition response for image ${index + 1}:`, {
+                  hasFaceMatches: !!response.FaceMatches?.length,
+                  matchCount: response.FaceMatches?.length || 0,
+                  firstMatchSimilarity: response.FaceMatches?.[0]?.Similarity || 0
+                });
+                
+                const bestMatch = response.FaceMatches?.[0];
+                
+                return {
+                  imageId: index + 1,
+                  similarity: bestMatch?.Similarity || 0,
+                  matched: !!bestMatch,
+                  url: image.id
+                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
+                    : undefined,
+                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+                };
+              } catch (rekognitionError) {
+                console.error(`AWS Rekognition error for image ${index + 1}:`, 
+                  rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
+                  rekognitionError
+                );
+                // Return a result with error information instead of failing the whole process
+                return {
+                  imageId: index + 1,
+                  similarity: 0,
+                  matched: false,
+                  error: rekognitionError instanceof Error ? rekognitionError.message : 'AWS Rekognition error',
+                  url: image.id
+                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
+                    : undefined,
+                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+                };
+              }
             } catch (error) {
               console.error(
                 `Face comparison error for image ${index + 1}:`,

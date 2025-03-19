@@ -54,16 +54,16 @@ export default function FaceUpload({
       // Always require AWS credentials
       if (awsCredentials) {
         // Make sure we're appending strings, not objects
-        formData.append("awsAccessKeyId", String(awsCredentials.awsAccessKeyId));
+        formData.append("awsAccessKeyId", String(awsCredentials.awsAccessKeyId).trim());
         formData.append(
           "awsSecretAccessKey",
-          String(awsCredentials.awsSecretAccessKey)
+          String(awsCredentials.awsSecretAccessKey).trim()
         );
         
         // Debug log to confirm credentials are being added to form data
         console.log("Added AWS credentials to form data:", {
-          accessKeyLength: awsCredentials.awsAccessKeyId.length,
-          secretKeyLength: awsCredentials.awsSecretAccessKey.length
+          accessKeyLength: awsCredentials.awsAccessKeyId.trim().length,
+          secretKeyLength: awsCredentials.awsSecretAccessKey.trim().length
         });
       } else {
         throw new Error("AWS credentials are not defined.");
