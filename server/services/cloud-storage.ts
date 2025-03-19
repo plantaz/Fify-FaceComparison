@@ -175,8 +175,9 @@ export function createStorageProvider(url: string, apiKey?: string): CloudStorag
 
   if (url.includes('drive.google')) {
     if (!apiKey) {
-      throw new Error("Google Drive API key is required");
+      throw new Error("Google Drive API key not configured");
     }
+    console.log("Creating Google Drive provider with API key:", apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4));
     return new GoogleDriveProvider(apiKey);
   }
 

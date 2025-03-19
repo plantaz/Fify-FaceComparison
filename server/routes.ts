@@ -11,6 +11,7 @@ import {
   CompareFacesCommand,
 } from "@aws-sdk/client-rekognition";
 
+// Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
@@ -19,6 +20,11 @@ const upload = multer({
 export function registerRoutes(app: Express): Server {
   app.post("/api/scan", async (req, res) => {
     try {
+      console.log("Received /api/scan request with body:", {
+        url: req.body.url,
+        hasGoogleApiKey: !!req.body.googleApiKey
+      });
+      
       const { url, googleApiKey } = driveUrlSchema
         .extend({
           googleApiKey: isDevelopment ? z.string().optional() : z.string(),
@@ -27,9 +33,8 @@ export function registerRoutes(app: Express): Server {
 
       const driveType = url.includes("onedrive") ? "onedrive" : "gdrive";
 
-      const apiKey = isDevelopment
-        ? process.env.GOOGLE_DRIVE_API_KEY
-        : googleApiKey;
+      const apiKey = googleApiKey || (isDevelopment ? process.env.GOOGLE_DRIVE_API_KEY : null);
+      console.log("Using API key:", apiKey ? "Present (not shown for security)" : "Missing");
 
       if (!apiKey) {
         throw new Error("Google Drive API key not configured");
@@ -65,8 +70,12 @@ export function registerRoutes(app: Express): Server {
       const jobId = parseInt(req.params.jobId);
       const { awsAccessKeyId, awsSecretAccessKey, googleApiKey } = req.body;
 
-      // Log the incoming request's body
-      console.log("Request body:", req.body);
+      // Enhanced logging for request body and form data
+      console.log("Request body keys:", Object.keys(req.body));
+      console.log("AWS Access Key provided:", !!awsAccessKeyId);
+      console.log("AWS Secret Access Key provided:", !!awsSecretAccessKey);
+      console.log("Google API Key provided:", !!googleApiKey);
+      console.log("Face image provided:", !!req.file);
 
       // Ensure the Google API key is provided
       if (!googleApiKey) {
@@ -85,17 +94,27 @@ export function registerRoutes(app: Express): Server {
       }
 
       const credentials = {
-        accessKeyId: isDevelopment
-          ? process.env.AWS_ACCESS_KEY_ID!
+        accessKeyId: isDevelopment && process.env.AWS_ACCESS_KEY_ID
+          ? process.env.AWS_ACCESS_KEY_ID
           : awsAccessKeyId,
-        secretAccessKey: isDevelopment
-          ? process.env.AWS_SECRET_ACCESS_KEY!
+        secretAccessKey: isDevelopment && process.env.AWS_SECRET_ACCESS_KEY
+          ? process.env.AWS_SECRET_ACCESS_KEY
           : awsSecretAccessKey,
       };
 
       // Log credentials to confirm they exist
-      console.log("Credentials:", credentials);
-
+      console.log("AWS Credentials provided:", 
+        !!credentials.accessKeyId && !!credentials.secretAccessKey);
+      
+      // Check AWS credentials more thoroughly
+      if (!awsAccessKeyId && !process.env.AWS_ACCESS_KEY_ID) {
+        return res.status(400).json({ error: "AWS Access Key ID not provided" });
+      }
+      
+      if (!awsSecretAccessKey && !process.env.AWS_SECRET_ACCESS_KEY) {
+        return res.status(400).json({ error: "AWS Secret Access Key not provided" });
+      }
+      
       if (!credentials.accessKeyId || !credentials.secretAccessKey) {
         return res.status(400).json({ error: "AWS credentials not provided" });
       }

@@ -27,6 +27,7 @@ export const translations = {
     "scan.loading": "Scanning...",
     "analyze.button": "Analyze Faces",
     "analyze.loading": "Analyzing...",
+    "submit": "Submit",
 
     // Messages
     "noImages.title": "No Images Found",
@@ -41,7 +42,14 @@ export const translations = {
     "results.title": "Analysis Results",
     "results.matchFound": "Match Found!",
     "results.noMatch": "No Match Found",
-    "results.similarity": "Similarity: {similarity}%"
+    "results.similarity": "Similarity: {similarity}%",
+    "results.analysisComplete": "Analysis Complete",
+    "results.foundMatches": "Found {matchCount} matches in {totalCount} images",
+    "results.matchedImages": "Matched Images",
+    "results.downloadCSV": "Download CSV",
+    "results.image": "Image #{id}",
+    "results.similarityPercentage": "{value}% similarity",
+    "results.noResultsAvailable": "No results available"
   },
   "pt-BR": {
     // Hero section
@@ -66,6 +74,7 @@ export const translations = {
     "scan.loading": "Digitalizando...",
     "analyze.button": "Analisar Rostos",
     "analyze.loading": "Analisando...",
+    "submit": "Enviar",
 
     // Messages
     "noImages.title": "Nenhuma Imagem Encontrada",
@@ -80,7 +89,14 @@ export const translations = {
     "results.title": "Resultados da Análise",
     "results.matchFound": "Correspondência Encontrada!",
     "results.noMatch": "Nenhuma Correspondência Encontrada",
-    "results.similarity": "Similaridade: {similarity}%"
+    "results.similarity": "Similaridade: {similarity}%",
+    "results.analysisComplete": "Análise Completa",
+    "results.foundMatches": "Encontrados {matchCount} correspondências em {totalCount} imagens",
+    "results.matchedImages": "Imagens Correspondentes",
+    "results.downloadCSV": "Baixar CSV",
+    "results.image": "Imagem #{id}",
+    "results.similarityPercentage": "{value}% de similaridade",
+    "results.noResultsAvailable": "Nenhum resultado disponível"
   }
 } as const;
 

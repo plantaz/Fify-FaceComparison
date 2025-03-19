@@ -41,15 +41,25 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
 
   const scanMutation = useMutation({
     mutationFn: async (data: FormData) => {
-      console.log("Scanning with API key:", data.googleApiKey); // Debug log
+      console.log("Submitting scan with URL:", data.url);
+      console.log("API key length:", data.googleApiKey ? data.googleApiKey.length : 0);
+      
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          url: data.url,
+          googleApiKey: data.googleApiKey
+        }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("Scan API error:", errorText);
+        throw new Error(errorText);
+      }
       return res.json();
     },
     onSuccess: (data, variables) => {

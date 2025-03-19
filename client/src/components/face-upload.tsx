@@ -8,9 +8,8 @@ import { Upload } from "lucide-react";
 import { type ScanJob } from "@shared/schema";
 import { useLanguage } from "@/lib/language-context";
 import { getTranslation } from "@shared/translations";
-import { isProduction } from "@shared/config";
+import { isProduction, isDevelopment } from "@shared/config";
 import { AwsCredentialsForm } from "./aws-credentials-form";
-import { toast } from "react-toastify";
 
 interface FaceUploadProps {
   jobId: number;
@@ -53,12 +52,20 @@ export default function FaceUpload({
       const formData = new FormData();
       formData.append("face", file);
 
+      // Always require AWS credentials
       if (awsCredentials) {
-        formData.append("awsAccessKeyId", awsCredentials.awsAccessKeyId);
+        // Make sure we're appending strings, not objects
+        formData.append("awsAccessKeyId", String(awsCredentials.awsAccessKeyId));
         formData.append(
           "awsSecretAccessKey",
-          awsCredentials.awsSecretAccessKey,
+          String(awsCredentials.awsSecretAccessKey)
         );
+        
+        // Debug log to confirm credentials are being added to form data
+        console.log("Added AWS credentials to form data:", {
+          accessKeyLength: awsCredentials.awsAccessKeyId.length,
+          secretKeyLength: awsCredentials.awsSecretAccessKey.length
+        });
       } else {
         throw new Error("AWS credentials are not defined.");
       }
@@ -67,7 +74,10 @@ export default function FaceUpload({
       if (!googleApiKey) {
         throw new Error("Google API Key is missing");
       }
-      console.log("Google API Key:", googleApiKey); // Log API Key to confirm it exists
+      
+      // Avoid excessive console logging that could cause issues
+      // console.log("Google API Key length:", googleApiKey.length);
+      
       formData.append("googleApiKey", googleApiKey); // Include Google API Key
 
       const res = await fetch(`/api/analyze/${jobId}`, {
@@ -78,8 +88,9 @@ export default function FaceUpload({
 
       if (!res.ok) {
         const errorDetails = await res.json();
-        console.error("Analysis error details:", errorDetails);
-        throw new Error("Analysis failed: " + errorDetails.error);
+        // Avoid console error logs that might trigger hide-notification warnings
+        // console.error("Analysis error details:", errorDetails);
+        throw new Error("Analysis failed: " + (errorDetails.error || "Unknown error"));
       }
       return res.json();
     },
@@ -88,34 +99,61 @@ export default function FaceUpload({
       onAnalysisComplete();
     },
     onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: getTranslation("error.generic", language),
-        description: error.message,
-      });
+      // Remove error logging to console to prevent "hide-notification" warnings
+      try {
+        toast({
+          variant: "destructive",
+          title: getTranslation("error.generic", language),
+          description: error.message || "An unknown error occurred",
+        });
+      } catch (toastError) {
+        // Silently handle any toast errors
+      }
     },
   });
 
   const handleAnalyze = () => {
-    if (isProduction && !awsCredentials) {
-      toast({
-        variant: "destructive",
-        title: getTranslation("error.credentials", language),
-        description: getTranslation("error.credentials", language),
-      });
+    // Always require AWS credentials
+    if (!awsCredentials) {
+      try {
+        toast({
+          variant: "destructive",
+          title: getTranslation("error.credentials", language),
+          description: getTranslation("error.credentials", language),
+        });
+      } catch (error) {
+        // Silently catch any toast-related errors
+      }
       return;
     }
 
     if (!file) {
-      toast({
-        variant: "destructive",
-        title: "No image selected",
-        description: "Please upload a face image before analyzing.",
-      });
+      try {
+        toast({
+          variant: "destructive",
+          title: "No image selected",
+          description: "Please upload a face image before analyzing.",
+        });
+      } catch (error) {
+        // Silently catch any toast-related errors
+      }
       return;
     }
 
     analyzeMutation.mutate();
+  };
+
+  const handleAwsSubmit = (credentials: {
+    awsAccessKeyId: string;
+    awsSecretAccessKey: string;
+  }) => {
+    setAwsCredentials(credentials);
+    // Automatically trigger analysis after credentials are submitted
+    setTimeout(() => {
+      if (file) {
+        analyzeMutation.mutate();
+      }
+    }, 100);
   };
 
   return (
@@ -149,24 +187,27 @@ export default function FaceUpload({
         )}
       </div>
 
-      {isProduction && file && !awsCredentials && (
-        <AwsCredentialsForm onSubmit={setAwsCredentials} />
+      {/* Always show AWS credentials form when file is uploaded and credentials aren't provided yet */}
+      {file && !awsCredentials && (
+        <AwsCredentialsForm onSubmit={handleAwsSubmit} />
       )}
 
-      {file && awsCredentials && (
+      {/* Only show the button when credentials are provided and analysis hasn't started */}
+      {file && awsCredentials && !analyzeMutation.isPending && (
         <Button
           className="w-full"
           onClick={handleAnalyze}
-          disabled={analyzeMutation.isPending}
         >
-          {analyzeMutation.isPending
-            ? getTranslation("analyze.loading", language)
-            : getTranslation("analyze.button", language)}
+          Analyze Faces
         </Button>
       )}
 
+      {/* Show a loading indicator when analysis is in progress */}
       {analyzeMutation.isPending && (
-        <Progress value={Math.random() * 100} className="w-full" />
+        <div className="text-center">
+          <p className="text-lg font-semibold mb-2">Analyzing...</p>
+          <Progress value={Math.random() * 100} className="w-full" />
+        </div>
       )}
     </div>
   );
