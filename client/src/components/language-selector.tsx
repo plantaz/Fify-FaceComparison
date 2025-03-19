@@ -14,11 +14,16 @@ export function LanguageSelector() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="w-9 px-0">
+        <Button variant="ghost" size="icon" className="w-9 px-0" aria-label="Select language">
           <ReactCountryFlag 
             countryCode={language === 'pt-BR' ? 'BR' : 'US'} 
-            style={{ width: '1.5em', height: '1.5em' }} 
             svg 
+            style={{
+              width: '1.5em',
+              height: '1.5em'
+            }}
+            title={language === 'pt-BR' ? 'Brazilian Portuguese' : 'English'}
+            alt={language === 'pt-BR' ? 'Brazilian flag' : 'United States flag'}
           />
         </Button>
       </DropdownMenuTrigger>

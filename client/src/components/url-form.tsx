@@ -108,6 +108,7 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-500 hover:text-blue-600"
+                aria-label="Google API key documentation"
               >
                 <ExternalLink className="h-4 w-4" />
               </a>
@@ -125,6 +126,7 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
               variant="ghost"
               className="absolute right-2 top-1/2 -translate-y-1/2"
               onClick={() => setShowApiKey(!showApiKey)}
+              aria-label={showApiKey ? "Hide API key" : "Show API key"}
             >
               {showApiKey ? (
                 <EyeOff className="h-4 w-4" />
