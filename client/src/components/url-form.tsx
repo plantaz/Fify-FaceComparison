@@ -84,10 +84,11 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit((data) => scanMutation.mutate(data))} className="space-y-4">
+      <form onSubmit={form.handleSubmit((data) => scanMutation.mutate(data))} className="space-y-4 max-w-md mx-auto">
         <Input
           placeholder={getTranslation("url.placeholder", language)}
           {...form.register("url")}
+          className="w-full"
         />
         {form.formState.errors.url && (
           <Alert variant="destructive">
@@ -117,6 +118,7 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
               type={showApiKey ? "text" : "password"}
               placeholder={getTranslation("googleApiKey.placeholder", language)}
               {...form.register("googleApiKey")}
+              className="w-full"
             />
             <Button
               type="button"

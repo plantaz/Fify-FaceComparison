@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { type ScanJob } from "@shared/schema";
 import UrlForm from "@/components/url-form";
@@ -21,21 +20,23 @@ export default function HomePage() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen flex flex-col">
       <HeroSection />
-      {!scanJob ? (
-        <UrlForm onScanComplete={handleScanComplete} />
-      ) : !analysisComplete ? (
-        <FaceUpload
-          jobId={scanJob.id}
-          imageCount={scanJob.imageCount}
-          onAnalysisComplete={handleAnalysisComplete}
-          setScanJob={setScanJob}
-          googleApiKey={googleApiKey}
-        />
-      ) : (
-        <ResultsDisplay results={scanJob.results} />
-      )}
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow">
+        {!scanJob ? (
+          <UrlForm onScanComplete={handleScanComplete} />
+        ) : !analysisComplete ? (
+          <FaceUpload
+            jobId={scanJob.id}
+            imageCount={scanJob.imageCount}
+            onAnalysisComplete={handleAnalysisComplete}
+            setScanJob={setScanJob}
+            googleApiKey={googleApiKey}
+          />
+        ) : (
+          <ResultsDisplay results={Array.isArray(scanJob.results) ? scanJob.results : null} />
+        )}
+      </div>
     </div>
   );
 }

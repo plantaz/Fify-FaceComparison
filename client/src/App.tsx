@@ -20,11 +20,15 @@ function App() {
   return (
     <LanguageProvider>
       <QueryClientProvider client={queryClient}>
-        <header className="fixed top-0 right-0 p-4 z-50">
-          <LanguageSelector />
-        </header>
-        <Router />
-        <Toaster />
+        <div className="relative min-h-screen">
+          <header className="absolute top-0 right-0 p-2 sm:p-4 z-50">
+            <LanguageSelector />
+          </header>
+          <main className="flex flex-col min-h-screen">
+            <Router />
+          </main>
+          <Toaster />
+        </div>
       </QueryClientProvider>
     </LanguageProvider>
   );
