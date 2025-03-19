@@ -36,6 +36,46 @@ npm run dev
 
 The application will be available at `http://localhost:5000`.
 
+## Deploying to Netlify
+
+This application can be deployed to Netlify with minimal configuration:
+
+1. Create a new site in Netlify
+2. Connect it to your GitHub repository
+3. Set the following build settings:
+   - Build command: `npm run build`
+   - Publish directory: `dist`
+   - Node version: 20.x (or later)
+
+4. Set up the required environment variables in Netlify:
+   - `DATABASE_URL`: Your database connection string (e.g. Neon, Supabase)
+   - `NODE_ENV`: Set to `development` (we're using development mode for simplicity)
+
+5. Create a file named `netlify.toml` in your repository root with the following content:
+```toml
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "dist/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/index/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+```
+
+6. Add this file to your repository and push the changes.
+
+Note: In this configuration, users will need to provide their own Google Drive API key and AWS credentials when using the app, as the application doesn't store these credentials on the server.
+
 ## API Keys and Credentials
 
 ### Google Drive API Key
