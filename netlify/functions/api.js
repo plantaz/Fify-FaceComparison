@@ -6,7 +6,7 @@ import multer from 'multer';
 import { RekognitionClient } from '@aws-sdk/client-rekognition';
 
 // Setup AWS SDK default configuration
-process.env.AWS_REGION = 'us-east-1';
+process.env.MY_AWS_REGION = 'us-east-1';
 
 // Setup express
 const app = express();
