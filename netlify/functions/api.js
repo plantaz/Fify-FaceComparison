@@ -10,8 +10,10 @@ process.env.MY_AWS_REGION = 'us-east-1';
 
 // Setup express
 const app = express();
+
+// Configure body parsers
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // Configure multer for file uploads
 const upload = multer({
@@ -29,6 +31,15 @@ app.use((req, res, next) => {
     return res.status(200).end();
   }
   
+  // Log incoming request details for debugging
+  console.log(`[Netlify Function] ${req.method} ${req.path}`);
+  console.log('[Netlify Function] Content-Type:', req.headers['content-type']);
+  
+  // For multipart form data, ensure the request body is readable
+  if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
+    console.log('[Netlify Function] Multipart form data detected');
+  }
+  
   next();
 });
 
@@ -36,4 +47,6 @@ app.use((req, res, next) => {
 registerRoutes(app);
 
 // Export the serverless function
-export const handler = serverless(app); 
+export const handler = serverless(app, {
+  binary: ['multipart/form-data', 'image/*']
+}); 

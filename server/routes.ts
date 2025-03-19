@@ -68,6 +68,11 @@ export function registerRoutes(app: Express): void {
   app.post("/api/analyze/:jobId", upload.single("face"), async (req, res) => {
     try {
       const jobId = parseInt(req.params.jobId);
+      
+      // Log all incoming request data for debugging
+      console.log("[API] Analyze request body keys:", Object.keys(req.body));
+      console.log("[API] File included:", !!req.file);
+      
       const { awsAccessKeyId, awsSecretAccessKey, googleApiKey } = req.body;
 
       // Trim and clean up credential strings
@@ -76,13 +81,12 @@ export function registerRoutes(app: Express): void {
       const cleanGoogleApiKey = googleApiKey?.trim();
 
       // Enhanced logging for request body and form data
-      console.log("Request body keys:", Object.keys(req.body));
-      console.log("AWS Access Key provided:", !!cleanAwsAccessKeyId);
-      console.log("AWS Secret Access Key provided:", !!cleanAwsSecretAccessKey);
-      console.log("Google API Key provided:", !!cleanGoogleApiKey);
-      console.log("Face image provided:", !!req.file);
-      console.log("AWS key length:", cleanAwsAccessKeyId?.length);
-      console.log("AWS secret length:", cleanAwsSecretAccessKey?.length);
+      console.log("[API] AWS Access Key provided:", !!cleanAwsAccessKeyId);
+      console.log("[API] AWS Secret Access Key provided:", !!cleanAwsSecretAccessKey);
+      console.log("[API] Google API Key provided:", !!cleanGoogleApiKey);
+      console.log("[API] Face image provided:", !!req.file);
+      console.log("[API] AWS key length:", cleanAwsAccessKeyId?.length);
+      console.log("[API] AWS secret length:", cleanAwsSecretAccessKey?.length);
 
       // Ensure the Google API key is provided
       if (!cleanGoogleApiKey) {
@@ -100,13 +104,15 @@ export function registerRoutes(app: Express): void {
         return res.status(400).json({ error: "No face image provided" });
       }
 
+      // For Netlify, ALWAYS use the credentials from the form
+      // Only use environment variables in development if form credentials are missing
       const credentials = {
-        accessKeyId: (isDevelopment && process.env.AWS_ACCESS_KEY_ID) || cleanAwsAccessKeyId,
-        secretAccessKey: (isDevelopment && process.env.AWS_SECRET_ACCESS_KEY) || cleanAwsSecretAccessKey,
+        accessKeyId: cleanAwsAccessKeyId || (isDevelopment ? process.env.AWS_ACCESS_KEY_ID : null),
+        secretAccessKey: cleanAwsSecretAccessKey || (isDevelopment ? process.env.AWS_SECRET_ACCESS_KEY : null)
       };
 
       // Log credentials to confirm they exist
-      console.log("AWS Credentials being used:", {
+      console.log("[API] AWS Credentials being used:", {
         accessKeyPresent: !!credentials.accessKeyId,
         accessKeyLength: credentials.accessKeyId?.length,
         secretKeyPresent: !!credentials.secretAccessKey,
@@ -123,14 +129,14 @@ export function registerRoutes(app: Express): void {
       }
 
       const rekognition = new RekognitionClient({
-        region: "us-east-1",
+        region: process.env.MY_AWS_REGION || "us-east-1",
         credentials: {
           accessKeyId: credentials.accessKeyId,
           secretAccessKey: credentials.secretAccessKey
         }
       });
 
-      console.log("Created AWS Rekognition client with region: us-east-1");
+      console.log("[API] Created AWS Rekognition client with region:", process.env.MY_AWS_REGION || "us-east-1");
 
       const referenceImage = req.file.buffer;
       if (!referenceImage) {
@@ -175,16 +181,31 @@ export function registerRoutes(app: Express): void {
                   driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
                 };
               } catch (rekognitionError) {
-                console.error(`AWS Rekognition error for image ${index + 1}:`, 
-                  rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
-                  rekognitionError
+                console.error(`[API] AWS Rekognition error for image ${index + 1}:`, 
+                  rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
                 );
-                // Return a result with error information instead of failing the whole process
+                
+                // Include the full error details for debugging
+                if (rekognitionError instanceof Error) {
+                  console.error("[API] Error details:", {
+                    name: rekognitionError.name,
+                    message: rekognitionError.message,
+                    stack: rekognitionError.stack
+                  });
+                }
+                
+                // Check for invalid token errors specifically
+                const errorMessage = rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error';
+                const isAuthError = errorMessage.includes('token') || errorMessage.includes('credentials') || 
+                                    errorMessage.includes('auth') || errorMessage.includes('access key');
+                
+                // Return a result with error information
                 return {
                   imageId: index + 1,
                   similarity: 0,
                   matched: false,
-                  error: rekognitionError instanceof Error ? rekognitionError.message : 'AWS Rekognition error',
+                  error: errorMessage,
+                  errorType: isAuthError ? 'auth_error' : 'processing_error',
                   url: image.id
                     ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
                     : undefined,
