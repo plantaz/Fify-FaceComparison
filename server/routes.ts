@@ -151,12 +151,36 @@ export function registerRoutes(app: Express): void {
       
       console.log(`[API] Total images to process: ${images.length}`);
       
-      // Process images in batches to avoid Lambda timeout
-      const BATCH_SIZE = 20; // Process 20 images at a time
+      // Process images in smaller batches with a tighter deadline to avoid Lambda timeout
+      const BATCH_SIZE = 5; // Process just 5 images at a time
       const results = [];
       
-      // Process images in batches
-      for (let i = 0; i < images.length; i += BATCH_SIZE) {
+      // Get existing results if any (in case this is a continuation)
+      const existingJob = await storage.getScanJob(jobId);
+      if (existingJob && existingJob.results && Array.isArray(existingJob.results) && existingJob.results.length > 0) {
+        console.log(`[API] Found ${existingJob.results.length} existing results, continuing from there`);
+        results.push(...existingJob.results);
+      }
+      
+      // Calculate how many images we can process within time limit
+      // Lambda has 10s timeout, allow 8s for processing to be safe
+      const startTime = Date.now();
+      const LAMBDA_SAFE_TIMEOUT = 8000; // 8 seconds in ms
+      
+      // Set a flag to track if we've processed everything
+      let isComplete = false;
+      
+      // Start processing where we left off
+      const startIndex = results.length;
+      
+      // Process images in batches until timeout approaches
+      for (let i = startIndex; i < images.length; i += BATCH_SIZE) {
+        if (Date.now() - startTime > LAMBDA_SAFE_TIMEOUT) {
+          console.log(`[API] Approaching Lambda timeout limit, stopping at ${results.length}/${images.length} images`);
+          // We're approaching the timeout, save what we have and return partial results
+          break;
+        }
+        
         console.log(`[API] Processing batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(images.length/BATCH_SIZE)}`);
         const imageBatch = images.slice(i, i + BATCH_SIZE);
         
@@ -242,17 +266,44 @@ export function registerRoutes(app: Express): void {
         // Add batch results to overall results
         results.push(...batchResults);
         
-        // Store partial results in case the function times out later
-        if (results.length % (BATCH_SIZE * 2) === 0 || i + BATCH_SIZE >= images.length) {
-          console.log(`[API] Saving intermediate results after processing ${results.length} images`);
-          await storage.updateScanJobResults(jobId, results);
-        }
+        // Save results after each batch
+        await storage.updateScanJobResults(jobId, results);
       }
-
-      const updatedJob = await storage.updateScanJobResults(jobId, results);
-      res.json(updatedJob);
+      
+      // Check if we've processed all images
+      isComplete = results.length >= images.length;
+      
+      // Update job status
+      const updatedJob = await storage.updateScanJobResults(jobId, results, isComplete ? "complete" : "processing");
+      
+      // Include process status in response
+      res.json({
+        ...updatedJob,
+        processing: {
+          total: images.length,
+          processed: results.length,
+          isComplete
+        }
+      });
     } catch (error) {
       console.error("Analysis error:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Add a new endpoint to check job status
+  app.get("/api/jobs/:jobId", async (req, res) => {
+    try {
+      const jobId = parseInt(req.params.jobId);
+      const job = await storage.getScanJob(jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+      
+      res.json(job);
+    } catch (error) {
+      console.error("Error fetching job status:", error);
       res.status(500).json({ error: (error as Error).message });
     }
   });

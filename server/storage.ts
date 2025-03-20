@@ -3,7 +3,7 @@ import { scanJobs, type ScanJob, type InsertScanJob } from "@shared/schema";
 export interface IStorage {
   createScanJob(job: InsertScanJob): Promise<ScanJob>;
   getScanJob(id: number): Promise<ScanJob | undefined>;
-  updateScanJobResults(id: number, results: any): Promise<ScanJob>;
+  updateScanJobResults(id: number, results: any, status?: string): Promise<ScanJob>;
 }
 
 export class MemStorage implements IStorage {
@@ -26,11 +26,11 @@ export class MemStorage implements IStorage {
     return this.jobs.get(id);
   }
 
-  async updateScanJobResults(id: number, results: any): Promise<ScanJob> {
+  async updateScanJobResults(id: number, results: any, status: string = 'complete'): Promise<ScanJob> {
     const job = this.jobs.get(id);
     if (!job) throw new Error("Job not found");
     
-    const updatedJob = { ...job, results, status: 'complete' };
+    const updatedJob = { ...job, results, status };
     this.jobs.set(id, updatedJob);
     return updatedJob;
   }

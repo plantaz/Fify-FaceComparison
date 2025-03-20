@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
 import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,9 @@ export default function FaceUpload({
     awsAccessKeyId: string;
     awsSecretAccessKey: string;
   } | null>(null);
+  const [progress, setProgress] = useState<{ processed: number; total: number } | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const pollTimerRef = useRef<number | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFile(acceptedFiles[0]);
@@ -91,11 +94,31 @@ export default function FaceUpload({
         // console.error("Analysis error details:", errorDetails);
         throw new Error("Analysis failed: " + (errorDetails.error || "Unknown error"));
       }
-      return res.json();
+      
+      const data = await res.json();
+      
+      // Check if we need to start polling (partial results)
+      if (data.processing && !data.processing.isComplete) {
+        setProgress({
+          processed: data.processing.processed,
+          total: data.processing.total
+        });
+        setIsPolling(true);
+        return data;
+      }
+      
+      return data;
     },
     onSuccess: (data) => {
       setScanJob(data);
-      onAnalysisComplete();
+      
+      // Only mark as complete if processing is actually done
+      if (!data.processing || data.processing.isComplete) {
+        onAnalysisComplete();
+      } else {
+        // Start polling for updates if not complete
+        setIsPolling(true);
+      }
     },
     onError: (error) => {
       // Remove error logging to console to prevent "hide-notification" warnings
@@ -110,6 +133,58 @@ export default function FaceUpload({
       }
     },
   });
+
+  // Poll for results when processing large image sets
+  useEffect(() => {
+    if (isPolling && !analyzeMutation.isPending) {
+      const pollForResults = async () => {
+        try {
+          // Simple GET request to check job status
+          const res = await fetch(`/api/jobs/${jobId}`, { 
+            method: "GET",
+            credentials: "include" 
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            setScanJob(data);
+            
+            // Check if processing is complete
+            if (data.status === 'complete' || 
+                (data.processing && data.processing.isComplete)) {
+              setIsPolling(false);
+              onAnalysisComplete();
+            } else if (data.processing) {
+              // Update progress
+              setProgress({
+                processed: data.processing.processed,
+                total: data.processing.total
+              });
+            }
+          } else {
+            // Stop polling on error
+            setIsPolling(false);
+          }
+        } catch (error) {
+          console.error("Error polling for results:", error);
+        }
+        
+        // Continue polling
+        if (isPolling) {
+          pollTimerRef.current = window.setTimeout(pollForResults, 3000); // Poll every 3 seconds
+        }
+      };
+      
+      pollTimerRef.current = window.setTimeout(pollForResults, 3000);
+      
+      // Cleanup function
+      return () => {
+        if (pollTimerRef.current) {
+          clearTimeout(pollTimerRef.current);
+        }
+      };
+    }
+  }, [isPolling, jobId, setScanJob, onAnalysisComplete, analyzeMutation.isPending]);
 
   const handleAnalyze = () => {
     // Always require AWS credentials
@@ -139,6 +214,9 @@ export default function FaceUpload({
       return;
     }
 
+    // Reset progress and start analysis
+    setProgress(null);
+    setIsPolling(false);
     analyzeMutation.mutate();
   };
 
@@ -154,6 +232,11 @@ export default function FaceUpload({
       }
     }, 100);
   };
+  
+  // Calculate progress percentage
+  const progressPercentage = progress 
+    ? Math.round((progress.processed / progress.total) * 100)
+    : null;
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
@@ -192,7 +275,7 @@ export default function FaceUpload({
       )}
 
       {/* Only show the button when credentials are provided and analysis hasn't started */}
-      {file && awsCredentials && !analyzeMutation.isPending && (
+      {file && awsCredentials && !analyzeMutation.isPending && !isPolling && (
         <Button
           className="w-full"
           onClick={handleAnalyze}
@@ -202,10 +285,23 @@ export default function FaceUpload({
       )}
 
       {/* Show a loading indicator when analysis is in progress */}
-      {analyzeMutation.isPending && (
+      {(analyzeMutation.isPending || isPolling) && (
         <div className="text-center">
-          <p className="text-lg font-semibold mb-2">Analyzing...</p>
-          <Progress value={Math.random() * 100} className="w-full" />
+          <p className="text-lg font-semibold mb-2">
+            {progress 
+              ? `Analyzing... ${progress.processed}/${progress.total} images (${progressPercentage}%)`
+              : "Analyzing..."}
+          </p>
+          <Progress 
+            value={progressPercentage || Math.random() * 100} 
+            className="w-full" 
+          />
+          
+          {isPolling && (
+            <p className="text-sm text-muted-foreground mt-2">
+              Processing large image set. This may take several minutes.
+            </p>
+          )}
         </div>
       )}
     </div>
