@@ -8,9 +8,12 @@
   MY_AWS_REGION = "us-east-1"
 
 [functions]
-  # Increase function timeout to 25 minutes (1500 seconds) to handle large batches
+  # Specify esbuild as the bundler
   node_bundler = "esbuild"
-  timeout = 1500
+
+# Configure the api function specifically
+[functions.api]
+  timeout = 1500 # 25 minutes in seconds
 
 [[redirects]]
   from = "/api/*"
