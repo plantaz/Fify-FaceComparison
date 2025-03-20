@@ -160,22 +160,29 @@ export default function FaceUpload({
                 processed: data.processing.processed,
                 total: data.processing.total
               });
+              
+              // If we have more than 100 images to process, use more aggressive polling
+              // to ensure we capture each batch completion quickly
+              const pollInterval = data.processing.total > 100 ? 1000 : 3000;
+              pollTimerRef.current = window.setTimeout(pollForResults, pollInterval);
+            } else {
+              // If we have results but no processing info, assume we need to continue polling
+              pollTimerRef.current = window.setTimeout(pollForResults, 2000);
             }
           } else {
-            // Stop polling on error
-            setIsPolling(false);
+            // On error, wait longer and retry
+            console.warn("Error polling for results, will retry in 5 seconds");
+            pollTimerRef.current = window.setTimeout(pollForResults, 5000);
           }
         } catch (error) {
           console.error("Error polling for results:", error);
-        }
-        
-        // Continue polling
-        if (isPolling) {
-          pollTimerRef.current = window.setTimeout(pollForResults, 3000); // Poll every 3 seconds
+          // On network errors, retry after a delay
+          pollTimerRef.current = window.setTimeout(pollForResults, 5000);
         }
       };
       
-      pollTimerRef.current = window.setTimeout(pollForResults, 3000);
+      // Start polling immediately
+      pollForResults();
       
       // Cleanup function
       return () => {
@@ -238,6 +245,14 @@ export default function FaceUpload({
     ? Math.round((progress.processed / progress.total) * 100)
     : null;
 
+  // Add a function to manually retry the analysis if it fails
+  const handleRetryAnalysis = () => {
+    // Reset progress and start analysis
+    setProgress(null);
+    setIsPolling(false);
+    analyzeMutation.mutate();
+  };
+
   return (
     <div className="max-w-xl mx-auto space-y-6">
       <div className="text-center mb-8">
@@ -298,9 +313,22 @@ export default function FaceUpload({
           />
           
           {isPolling && (
-            <p className="text-sm text-muted-foreground mt-2">
-              Processing large image set. This may take several minutes.
-            </p>
+            <div className="space-y-2 mt-2">
+              <p className="text-sm text-muted-foreground">
+                Processing large image set. This may take several minutes.
+              </p>
+              
+              {/* Add a button to manually continue processing if needed */}
+              {progress && progress.processed > 0 && progress.processed < progress.total && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleRetryAnalysis}
+                >
+                  Continue Processing
+                </Button>
+              )}
+            </div>
           )}
         </div>
       )}

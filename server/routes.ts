@@ -151,130 +151,160 @@ export function registerRoutes(app: Express): void {
       
       console.log(`[API] Total images to process: ${images.length}`);
       
-      // Process images in smaller batches with a tighter deadline to avoid Lambda timeout
-      const BATCH_SIZE = 5; // Process just 5 images at a time
-      const results = [];
+      // Process even smaller batches with an extremely strict timeout limit
+      const BATCH_SIZE = 2; // Process just 2 images at a time
+      let results = [];
       
       // Get existing results if any (in case this is a continuation)
       const existingJob = await storage.getScanJob(jobId);
       if (existingJob && existingJob.results && Array.isArray(existingJob.results) && existingJob.results.length > 0) {
         console.log(`[API] Found ${existingJob.results.length} existing results, continuing from there`);
-        results.push(...existingJob.results);
+        results = existingJob.results;
       }
       
       // Calculate how many images we can process within time limit
-      // Lambda has 10s timeout, allow 8s for processing to be safe
+      // Lambda has 10s timeout, be extremely conservative with 4s processing time
       const startTime = Date.now();
-      const LAMBDA_SAFE_TIMEOUT = 8000; // 8 seconds in ms
+      const LAMBDA_SAFE_TIMEOUT = 4000; // 4 seconds in ms
       
       // Set a flag to track if we've processed everything
       let isComplete = false;
       
       // Start processing where we left off
       const startIndex = results.length;
+      let totalProcessed = 0;
       
-      // Process images in batches until timeout approaches
-      for (let i = startIndex; i < images.length; i += BATCH_SIZE) {
-        if (Date.now() - startTime > LAMBDA_SAFE_TIMEOUT) {
-          console.log(`[API] Approaching Lambda timeout limit, stopping at ${results.length}/${images.length} images`);
-          // We're approaching the timeout, save what we have and return partial results
-          break;
-        }
-        
-        console.log(`[API] Processing batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(images.length/BATCH_SIZE)}`);
-        const imageBatch = images.slice(i, i + BATCH_SIZE);
-        
-        const batchResults = await Promise.all(
-          imageBatch.map(
-            async (image: { buffer: Buffer; id?: string }, batchIndex: number) => {
-              const index = i + batchIndex;
-              try {
-                console.log(`Analyzing image ${index + 1}...`);
-                const command = new CompareFacesCommand({
-                  SourceImage: { Bytes: referenceImage },
-                  TargetImage: { Bytes: image.buffer },
-                  SimilarityThreshold: 70,
-                });
+      try {
+        // Process images in batches until timeout approaches
+        for (let i = startIndex; i < images.length; i += BATCH_SIZE) {
+          // Check elapsed time frequently and stop early to ensure we can save results
+          if (Date.now() - startTime > LAMBDA_SAFE_TIMEOUT) {
+            console.log(`[API] Approaching Lambda timeout limit, stopping at ${results.length}/${images.length} images`);
+            // We're approaching the timeout, save what we have and return partial results
+            break;
+          }
+          
+          console.log(`[API] Processing batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(images.length/BATCH_SIZE)}`);
+          const imageBatch = images.slice(i, i + BATCH_SIZE);
+          
+          // Use traditional for loop to avoid TypeScript iteration issues
+          for (let batchIndex = 0; batchIndex < imageBatch.length; batchIndex++) {
+            const image = imageBatch[batchIndex];
+            const index = i + batchIndex;
+            
+            // Check elapsed time before each individual image
+            if (Date.now() - startTime > LAMBDA_SAFE_TIMEOUT) {
+              console.log(`[API] Approaching Lambda timeout limit, stopping at ${results.length}/${images.length} images`);
+              break;
+            }
+            
+            try {
+              console.log(`Analyzing image ${index + 1}...`);
+              const command = new CompareFacesCommand({
+                SourceImage: { Bytes: referenceImage },
+                TargetImage: { Bytes: image.buffer },
+                SimilarityThreshold: 70,
+              });
 
-                try {
-                  console.log(`Sending AWS Rekognition request for image ${index + 1}`);
-                  const response = await rekognition.send(command);
-                  console.log(`AWS Rekognition response for image ${index + 1}:`, {
-                    hasFaceMatches: !!response.FaceMatches?.length,
-                    matchCount: response.FaceMatches?.length || 0,
-                    firstMatchSimilarity: response.FaceMatches?.[0]?.Similarity || 0
-                  });
-                  
-                  const bestMatch = response.FaceMatches?.[0];
-                  
-                  return {
-                    imageId: index + 1,
-                    similarity: bestMatch?.Similarity || 0,
-                    matched: !!bestMatch,
-                    url: image.id
-                      ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
-                      : undefined,
-                    driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-                  };
-                } catch (rekognitionError) {
-                  console.error(`[API] AWS Rekognition error for image ${index + 1}:`, 
-                    rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
-                  );
-                  
-                  // Include the full error details for debugging
-                  if (rekognitionError instanceof Error) {
-                    console.error("[API] Error details:", {
-                      name: rekognitionError.name,
-                      message: rekognitionError.message,
-                      stack: rekognitionError.stack
-                    });
-                  }
-                  
-                  // Check for invalid token errors specifically
-                  const errorMessage = rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error';
-                  const isAuthError = errorMessage.includes('token') || errorMessage.includes('credentials') || 
-                                      errorMessage.includes('auth') || errorMessage.includes('access key');
-                  
-                  // Return a result with error information
-                  return {
-                    imageId: index + 1,
-                    similarity: 0,
-                    matched: false,
-                    error: errorMessage,
-                    errorType: isAuthError ? 'auth_error' : 'processing_error',
-                    url: image.id
-                      ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
-                      : undefined,
-                    driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-                  };
-                }
-              } catch (error) {
-                console.error(
-                  `Face comparison error for image ${index + 1}:`,
-                  error,
+              try {
+                console.log(`Sending AWS Rekognition request for image ${index + 1}`);
+                const response = await rekognition.send(command);
+                console.log(`AWS Rekognition response for image ${index + 1}:`, {
+                  hasFaceMatches: !!response.FaceMatches?.length,
+                  matchCount: response.FaceMatches?.length || 0,
+                  firstMatchSimilarity: response.FaceMatches?.[0]?.Similarity || 0
+                });
+                
+                const bestMatch = response.FaceMatches?.[0];
+                
+                results.push({
+                  imageId: index + 1,
+                  similarity: bestMatch?.Similarity || 0,
+                  matched: !!bestMatch,
+                  url: image.id
+                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
+                    : undefined,
+                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+                });
+                
+                totalProcessed++;
+              } catch (rekognitionError) {
+                console.error(`[API] AWS Rekognition error for image ${index + 1}:`, 
+                  rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
                 );
-                return {
+                
+                // Include the full error details for debugging
+                if (rekognitionError instanceof Error) {
+                  console.error("[API] Error details:", {
+                    name: rekognitionError.name,
+                    message: rekognitionError.message,
+                    stack: rekognitionError.stack
+                  });
+                }
+                
+                // Check for invalid token errors specifically
+                const errorMessage = rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error';
+                const isAuthError = errorMessage.includes('token') || errorMessage.includes('credentials') || 
+                                    errorMessage.includes('auth') || errorMessage.includes('access key');
+                
+                // Add error result
+                results.push({
                   imageId: index + 1,
                   similarity: 0,
                   matched: false,
-                };
+                  error: errorMessage,
+                  errorType: isAuthError ? 'auth_error' : 'processing_error',
+                  url: image.id
+                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
+                    : undefined,
+                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+                });
+                
+                totalProcessed++;
               }
-            },
-          ),
-        );
-        
-        // Add batch results to overall results
-        results.push(...batchResults);
-        
-        // Save results after each batch
-        await storage.updateScanJobResults(jobId, results);
+            } catch (error) {
+              console.error(
+                `Face comparison error for image ${index + 1}:`,
+                error,
+              );
+              
+              results.push({
+                imageId: index + 1,
+                similarity: 0,
+                matched: false,
+              });
+              
+              totalProcessed++;
+            }
+            
+            // Save results after EACH image to ensure no work is lost
+            if (totalProcessed % 1 === 0) { // Save after every image
+              try {
+                await storage.updateScanJobResults(jobId, results, "processing");
+                console.log(`[API] Saved progress after ${results.length} images`);
+              } catch (saveError) {
+                console.error("Error saving intermediate results:", saveError);
+              }
+            }
+          }
+        }
+      } catch (processingError) {
+        console.error("Error during batch processing:", processingError);
+        // Make sure to save what we have even if an error occurs
+        if (results.length > 0) {
+          await storage.updateScanJobResults(jobId, results, "processing");
+        }
       }
       
       // Check if we've processed all images
       isComplete = results.length >= images.length;
       
-      // Update job status
-      const updatedJob = await storage.updateScanJobResults(jobId, results, isComplete ? "complete" : "processing");
+      // Final update to job status
+      const updatedJob = await storage.updateScanJobResults(
+        jobId, 
+        results, 
+        isComplete ? "complete" : "processing"
+      );
       
       // Include process status in response
       res.json({
