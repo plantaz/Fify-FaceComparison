@@ -79,7 +79,12 @@ export function registerRoutes(app: Express): void {
       const googleApiKey = req.body.googleApiKey;
       const continuationToken = req.body.continuationToken;
       
-      console.log("[API] Continuation token present:", !!continuationToken);
+      // Log less frequently to reduce console noise
+      if (!continuationToken) {
+        console.log("[API] New analysis started for job:", jobId);
+      } else {
+        console.log("[API] Continuation request for job:", jobId);
+      }
 
       // Trim and clean up credential strings
       const cleanAwsAccessKeyId = awsAccessKeyId?.trim();
@@ -91,18 +96,10 @@ export function registerRoutes(app: Express): void {
       try {
         if (continuationToken) {
           parsedToken = JSON.parse(continuationToken);
-          console.log("[API] Parsed token:", JSON.stringify(parsedToken));
         }
       } catch (tokenError) {
         console.error("[API] Error parsing continuation token:", tokenError);
       }
-
-      // Enhanced logging for request body and form data
-      console.log("[API] AWS Access Key provided:", !!cleanAwsAccessKeyId);
-      console.log("[API] AWS Secret Access Key provided:", !!cleanAwsSecretAccessKey);
-      console.log("[API] Google API Key provided:", !!cleanGoogleApiKey);
-      console.log("[API] Parsed token:", !!parsedToken);
-      console.log("[API] Face image provided:", !!req.file);
 
       // Ensure the Google API key is provided
       if (!cleanGoogleApiKey) {
@@ -130,9 +127,9 @@ export function registerRoutes(app: Express): void {
         return res.status(400).json({ error: "AWS credentials are required" });
       }
 
-      // Lambda safe timeout (8 seconds to be safe)
+      // Lambda safe timeout (4 seconds to be ultra-safe for Lambda)
       const startTime = Date.now();
-      const SAFE_TIMEOUT = 8000;
+      const SAFE_TIMEOUT = 4000;
       
       // Create Rekognition client
       const rekognition = new RekognitionClient({
@@ -200,14 +197,15 @@ export function registerRoutes(app: Express): void {
       
       console.log(`[API] Total images: ${images.length}, starting from index: ${startIndex}`);
       
-      // Process a small batch of images (max 5 per Lambda invocation)
-      const BATCH_SIZE = 5;
+      // Process a very small batch of images (max 2 per Lambda invocation)
+      // This is ultra conservative to ensure each Lambda invocation completes quickly
+      const BATCH_SIZE = 2;
       const endIndex = Math.min(startIndex + BATCH_SIZE, images.length);
       let isComplete = false;
       
       // Process each image in sequence until timeout approaches
       for (let i = startIndex; i < endIndex; i++) {
-        // Check if we're approaching Lambda timeout
+        // Check if we're approaching Lambda timeout more aggressively
         if (Date.now() - startTime > SAFE_TIMEOUT) {
           console.log(`[API] Approaching time limit, stopping at index ${i}`);
           
@@ -259,6 +257,14 @@ export function registerRoutes(app: Express): void {
               url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
               driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
             });
+            
+            // Save progress after EACH image to ensure we don't lose results
+            try {
+              await storage.updateScanJobResults(jobId, results, "processing");
+            } catch (saveError) {
+              console.error("Error saving results after image:", saveError);
+            }
+            
           } catch (rekognitionError) {
             console.error(`[API] AWS Rekognition error for image ${i + 1}:`, 
               rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
@@ -273,6 +279,13 @@ export function registerRoutes(app: Express): void {
               url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
               driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
             });
+            
+            // Save progress even after errors
+            try {
+              await storage.updateScanJobResults(jobId, results, "processing");
+            } catch (saveError) {
+              console.error("Error saving results after rekognition error:", saveError);
+            }
           }
         } catch (error) {
           console.error(`Face comparison error for image ${i + 1}:`, error);
@@ -281,11 +294,13 @@ export function registerRoutes(app: Express): void {
             similarity: 0,
             matched: false,
           });
-        }
-        
-        // Save progress after each image
-        if ((i - startIndex) % 2 === 1 || i === endIndex - 1) {
-          await storage.updateScanJobResults(jobId, results, "processing");
+          
+          // Save progress even after errors
+          try {
+            await storage.updateScanJobResults(jobId, results, "processing");
+          } catch (saveError) {
+            console.error("Error saving results after face comparison error:", saveError);
+          }
         }
       }
       

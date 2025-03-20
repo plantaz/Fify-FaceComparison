@@ -36,6 +36,9 @@ export default function FaceUpload({
   const [isPolling, setIsPolling] = useState(false);
   const pollTimerRef = useRef<number | null>(null);
   const [continuationToken, setContinuationToken] = useState<string | null>(null);
+  const [isContinuing, setIsContinuing] = useState(false);
+  const lastPollTimeRef = useRef<number>(0);
+  const minPollIntervalMs = 5000; // Minimum 5 seconds between polls
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFile(acceptedFiles[0]);
@@ -52,6 +55,18 @@ export default function FaceUpload({
     mutationFn: async () => {
       if (!file && !continuationToken) throw new Error("No image has been selected.");
 
+      // Ensure we're not hammering the server with continuation requests
+      if (continuationToken) {
+        const timeSinceLastRequest = Date.now() - lastPollTimeRef.current;
+        if (timeSinceLastRequest < minPollIntervalMs) {
+          await new Promise(resolve => 
+            setTimeout(resolve, minPollIntervalMs - timeSinceLastRequest)
+          );
+        }
+        setIsContinuing(true);
+      }
+      
+      lastPollTimeRef.current = Date.now();
       const formData = new FormData();
       
       // Only append the face image if it's the first request
@@ -67,12 +82,6 @@ export default function FaceUpload({
           "awsSecretAccessKey",
           String(awsCredentials.awsSecretAccessKey).trim()
         );
-        
-        // Debug log to confirm credentials are being added to form data
-        console.log("Added AWS credentials to form data:", {
-          accessKeyLength: awsCredentials.awsAccessKeyId.trim().length,
-          secretKeyLength: awsCredentials.awsSecretAccessKey.trim().length
-        });
       } else {
         throw new Error("AWS credentials are not defined.");
       }
@@ -102,6 +111,7 @@ export default function FaceUpload({
       }
       
       const data = await res.json();
+      setIsContinuing(false);
       
       // Store the continuation token if provided
       if (data.continuationToken) {
@@ -117,12 +127,12 @@ export default function FaceUpload({
           total: data.processing.total
         });
         
-        // If we have a continuation token, continue processing immediately
+        // If we have a continuation token, continue processing after a sufficient delay
         if (data.continuationToken) {
-          // Wait a moment to let Lambda reset, then continue
+          // Wait longer between batches to prevent overwhelming the server
           setTimeout(() => {
             analyzeMutation.mutate();
-          }, 2000); // Short delay before next batch
+          }, 5000); // Longer delay (5 seconds) between batches
         } else {
           // Otherwise fall back to polling
           setIsPolling(true);
@@ -151,6 +161,7 @@ export default function FaceUpload({
       }
     },
     onError: (error) => {
+      setIsContinuing(false);
       try {
         toast({
           variant: "destructive",
@@ -159,12 +170,12 @@ export default function FaceUpload({
         });
         
         // If we encounter an error with a continuation token, we can
-        // try again in a moment (could be a Lambda cold start issue)
+        // try again after a longer delay
         if (continuationToken) {
           setTimeout(() => {
             // Retry with the same token
             analyzeMutation.mutate();
-          }, 5000); // Wait 5 seconds before retry
+          }, 10000); // Wait 10 seconds before retry
         }
       } catch (toastError) {
         // Silently handle any toast errors
@@ -174,9 +185,21 @@ export default function FaceUpload({
 
   // Poll for results when processing large image sets
   useEffect(() => {
-    if (isPolling && !analyzeMutation.isPending) {
+    if (isPolling && !analyzeMutation.isPending && !isContinuing) {
       const pollForResults = async () => {
         try {
+          // Ensure we're not polling too frequently
+          const timeSinceLastPoll = Date.now() - lastPollTimeRef.current;
+          if (timeSinceLastPoll < minPollIntervalMs) {
+            pollTimerRef.current = window.setTimeout(
+              pollForResults, 
+              minPollIntervalMs - timeSinceLastPoll
+            );
+            return;
+          }
+          
+          lastPollTimeRef.current = Date.now();
+          
           // Simple GET request to check job status
           const res = await fetch(`/api/jobs/${jobId}`, { 
             method: "GET",
@@ -191,10 +214,10 @@ export default function FaceUpload({
             if (data.continuationToken) {
               setContinuationToken(data.continuationToken);
               setIsPolling(false);
-              // Trigger the next batch
+              // Trigger the next batch after a delay
               setTimeout(() => {
                 analyzeMutation.mutate();
-              }, 1000);
+              }, 5000); // 5 second delay before next batch
               return;
             }
             
@@ -210,28 +233,27 @@ export default function FaceUpload({
                 total: data.processing.total
               });
               
-              // If we have more than 100 images to process, use more aggressive polling
-              // to ensure we capture each batch completion quickly
-              const pollInterval = data.processing.total > 100 ? 1000 : 3000;
-              pollTimerRef.current = window.setTimeout(pollForResults, pollInterval);
+              // Throttle polling based on image count but ensure minimum interval
+              const baseInterval = data.processing.total > 100 ? 5000 : 8000;
+              pollTimerRef.current = window.setTimeout(pollForResults, baseInterval);
             } else {
-              // If we have results but no processing info, assume we need to continue polling
-              pollTimerRef.current = window.setTimeout(pollForResults, 2000);
+              // If we have results but no processing info, poll less frequently
+              pollTimerRef.current = window.setTimeout(pollForResults, 10000);
             }
           } else {
             // On error, wait longer and retry
-            console.warn("Error polling for results, will retry in 5 seconds");
-            pollTimerRef.current = window.setTimeout(pollForResults, 5000);
+            console.warn("Error polling for results, will retry in 10 seconds");
+            pollTimerRef.current = window.setTimeout(pollForResults, 10000);
           }
         } catch (error) {
           console.error("Error polling for results:", error);
-          // On network errors, retry after a delay
-          pollTimerRef.current = window.setTimeout(pollForResults, 5000);
+          // On network errors, retry after a longer delay
+          pollTimerRef.current = window.setTimeout(pollForResults, 10000);
         }
       };
       
-      // Start polling immediately
-      pollForResults();
+      // Start polling with a small initial delay
+      pollTimerRef.current = window.setTimeout(pollForResults, 1000);
       
       // Cleanup function
       return () => {
@@ -240,7 +262,7 @@ export default function FaceUpload({
         }
       };
     }
-  }, [isPolling, jobId, setScanJob, onAnalysisComplete, analyzeMutation.isPending, analyzeMutation.mutate]);
+  }, [isPolling, jobId, setScanJob, onAnalysisComplete, analyzeMutation.isPending, analyzeMutation.mutate, isContinuing]);
 
   const handleAnalyze = () => {
     // Always require AWS credentials
@@ -273,6 +295,7 @@ export default function FaceUpload({
     // Reset progress and start analysis
     setProgress(null);
     setIsPolling(false);
+    lastPollTimeRef.current = 0; // Reset time tracking
     analyzeMutation.mutate();
   };
 
@@ -299,6 +322,7 @@ export default function FaceUpload({
     // Reset progress and start analysis
     setProgress(null);
     setIsPolling(false);
+    lastPollTimeRef.current = 0; // Reset time tracking
     analyzeMutation.mutate();
   };
 
@@ -339,7 +363,7 @@ export default function FaceUpload({
       )}
 
       {/* Only show the button when credentials are provided and analysis hasn't started */}
-      {file && awsCredentials && !analyzeMutation.isPending && !isPolling && (
+      {file && awsCredentials && !analyzeMutation.isPending && !isPolling && !isContinuing && (
         <Button
           className="w-full"
           onClick={handleAnalyze}
@@ -349,7 +373,7 @@ export default function FaceUpload({
       )}
 
       {/* Show a loading indicator when analysis is in progress */}
-      {(analyzeMutation.isPending || isPolling) && (
+      {(analyzeMutation.isPending || isPolling || isContinuing) && (
         <div className="text-center">
           <p className="text-lg font-semibold mb-2">
             {progress 
@@ -361,18 +385,21 @@ export default function FaceUpload({
             className="w-full" 
           />
           
-          {isPolling && (
+          {(isPolling || isContinuing) && (
             <div className="space-y-2 mt-2">
               <p className="text-sm text-muted-foreground">
-                Processing large image set. This may take several minutes.
+                {isContinuing 
+                  ? "Processing batch... This may take a minute per batch." 
+                  : "Processing large image set. This will take several minutes."}
               </p>
               
               {/* Add a button to manually continue processing if needed */}
-              {progress && progress.processed > 0 && progress.processed < progress.total && (
+              {!isContinuing && progress && progress.processed > 0 && progress.processed < progress.total && (
                 <Button 
                   variant="outline" 
                   size="sm"
                   onClick={handleRetryAnalysis}
+                  disabled={analyzeMutation.isPending}
                 >
                   Continue Processing
                 </Button>

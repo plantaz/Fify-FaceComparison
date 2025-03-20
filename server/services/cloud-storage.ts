@@ -1,157 +1,132 @@
-import { DriveUrlInput } from "@shared/schema";
+export interface CloudImage {
+  id?: string;
+  name?: string;
+  buffer: Buffer;
+}
 
 export interface CloudStorageProvider {
-  scanDirectory(url: string): Promise<number>;
-  getImages(): Promise<Array<{ buffer: Buffer; id?: string }>>;
+  scanDirectory: (url: string) => Promise<number>;
+  getImages: () => Promise<CloudImage[]>;
 }
 
-export class GoogleDriveProvider implements CloudStorageProvider {
-  private url: string;
-
-  constructor(private apiKey: string) {
-    this.url = '';
-  }
-
-  private extractFolderId(url: string): string {
-    try {
-      console.log('Processing URL:', url);
-      const urlStr = decodeURIComponent(url);
-      console.log('Decoded URL:', urlStr);
-
-      const patterns = [
-        /\/folders\/([a-zA-Z0-9-_]+)/,
-        /drive\/(?:u\/\d+\/)?folders\/([a-zA-Z0-9-_]+)/,
-        /\/d\/([a-zA-Z0-9-_]+)/,
-        /id=([a-zA-Z0-9-_]+)/
-      ];
-
-      for (const pattern of patterns) {
-        console.log('Trying pattern:', pattern);
-        const match = urlStr.match(pattern);
-        if (match) {
-          console.log('Match found:', match);
-          if (match[1]) return match[1];
-        }
-      }
-
-      const lastSegment = urlStr.split('/').filter(Boolean).pop();
-      if (lastSegment && lastSegment.length > 10) {
-        return lastSegment;
-      }
-
-      throw new Error("Could not find folder ID in URL");
-    } catch (error) {
-      console.error("URL parsing error:", error);
-      throw new Error("Invalid Google Drive URL format");
-    }
-  }
-
-  async scanDirectory(url: string): Promise<number> {
-    this.url = url;
-    const folderId = this.extractFolderId(url);
-    let imageCount = 0;
-    let pageToken = '';
-
-    do {
-      const params = new URLSearchParams({
-        key: this.apiKey,
-        q: `'${folderId}' in parents and (mimeType contains 'image/jpeg' or mimeType contains 'image/png')`,
-        pageSize: '1000',
-        fields: 'nextPageToken, files(id, mimeType)',
-        ...(pageToken && { pageToken })
-      });
-
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?${params}`,
-        {
-          headers: {
-            'Accept': 'application/json',
-          }
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        console.error('Google Drive API error:', error);
-        throw new Error(error.error?.message || 'Failed to scan Google Drive folder');
-      }
-
-      const data = await response.json();
-      imageCount += data.files?.length || 0;
-      pageToken = data.nextPageToken;
-
-    } while (pageToken);
-
-    return imageCount;
-  }
-
-  async getImages(): Promise<Array<{ buffer: Buffer; id?: string }>> {
-    if (!this.url) {
-      console.error('URL not set in provider');
-      throw new Error("Drive URL not found");
-    }
-
-    console.log('Getting images for URL:', this.url);
-    const folderId = this.extractFolderId(this.url);
-    const images: Array<{ buffer: Buffer, id: string }> = [];
-    let pageToken = '';
-
-    do {
-      const params = new URLSearchParams({
-        key: this.apiKey,
-        q: `'${folderId}' in parents and (mimeType contains 'image/jpeg' or mimeType contains 'image/png')`,
-        pageSize: '1000',
-        fields: 'nextPageToken, files(id)',
-        ...(pageToken && { pageToken })
-      });
-
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?${params}`
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch images from Google Drive');
-      }
-
-      const data = await response.json();
-
-      const downloadPromises = data.files.map(async (file: { id: string }) => {
-        try {
-          const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s400`;
-          console.log(`Downloading smaller image version from: ${imageUrl}`);
-          
-          const imageResponse = await fetch(imageUrl);
-
-          if (imageResponse.ok) {
-            const arrayBuffer = await imageResponse.arrayBuffer();
-            return { buffer: Buffer.from(arrayBuffer), id: file.id };
-          }
-          return null;
-        } catch (error) {
-          console.error(`Failed to download image ${file.id}:`, error);
-          return null;
-        }
-      });
-
-      const downloadedImages = await Promise.all(downloadPromises);
-      images.push(...downloadedImages.filter((img): img is { buffer: Buffer, id: string } => img !== null));
-
-      pageToken = data.nextPageToken;
-    } while (pageToken);
-
-    console.log(`Successfully downloaded ${images.length} smaller image versions`);
-    return images;
-  }
-}
-
-export function createStorageProvider(url: string, apiKey?: string): CloudStorageProvider {
-  if (url.includes('drive.google')) {
-    if (!apiKey) {
-      throw new Error("Google Drive API key not configured");
-    }
-    console.log("Creating Google Drive provider with API key:", apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4));
-    return new GoogleDriveProvider(apiKey);
+export function createStorageProvider(
+  url: string,
+  apiKey: string,
+): CloudStorageProvider {
+  if (url.includes("drive.google.com")) {
+    return new GoogleStorageProvider(url, apiKey);
   }
 
   throw new Error("Unsupported storage provider");
+}
+
+class GoogleStorageProvider implements CloudStorageProvider {
+  private url: string;
+  private apiKey: string;
+  private listFiles: { id: string; name: string }[] = [];
+
+  constructor(url: string, apiKey: string) {
+    this.url = url;
+    this.apiKey = apiKey;
+  }
+
+  async scanDirectory(url: string): Promise<number> {
+    try {
+      const parsedUrl = new URL(url);
+      const folderPathMatch = parsedUrl.pathname.match(/\/folders\/([^/?]+)/);
+      if (!folderPathMatch) {
+        throw new Error("Invalid Google Drive folder URL");
+      }
+
+      const folderId = folderPathMatch[1];
+
+      const DRIVE_API_URL = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&key=${this.apiKey}`;
+      const response = await fetch(DRIVE_API_URL);
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(
+          `Google Drive API error: ${data.error.message || "Unknown error"}`,
+        );
+      }
+
+      // Filter for only image files
+      this.listFiles = data.files.filter((file: any) =>
+        file.mimeType?.startsWith("image/"),
+      );
+
+      console.log(`Found ${this.listFiles.length} images in Google Drive folder`);
+      return this.listFiles.length;
+    } catch (error) {
+      console.error("Error listing files:", error);
+      throw new Error(
+        `Failed to scan Google Drive directory: ${
+          (error as Error).message || "Unknown error"
+        }`,
+      );
+    }
+  }
+
+  async getImages(): Promise<CloudImage[]> {
+    // Get images from the specified folder
+    if (!this.listFiles || this.listFiles.length === 0) {
+      // Reinitialize if files list is not available
+      await this.scanDirectory(this.url);
+    }
+
+    // Parallel fetch with concurrency limit
+    const MAX_CONCURRENT_DOWNLOADS = 2; // Limit concurrent downloads to avoid overloading APIs
+    const results: CloudImage[] = [];
+    
+    // Process files in small batches
+    for (let i = 0; i < this.listFiles.length; i += MAX_CONCURRENT_DOWNLOADS) {
+      // Define a batch of files to process
+      const batch = this.listFiles.slice(i, i + MAX_CONCURRENT_DOWNLOADS);
+      
+      console.log(`Processing batch ${Math.floor(i/MAX_CONCURRENT_DOWNLOADS) + 1}/${Math.ceil(this.listFiles.length/MAX_CONCURRENT_DOWNLOADS)}`);
+      
+      // Process this batch of files with a concurrency limit
+      const batchResults = await Promise.all(
+        batch.map(async (file) => {
+          try {
+            // Smaller s200 size for analysis is plenty (faces don't need high resolution)
+            // This significantly reduces download size and time
+            const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s200`;
+            
+            console.log(`Downloading image (s200 size) for file: ${file.name || file.id}`);
+            const response = await fetch(imageUrl);
+            
+            if (!response.ok) {
+              console.error(`Failed to fetch image for ${file.name || file.id}: ${response.statusText}`);
+              return null;
+            }
+            
+            const buffer = Buffer.from(await response.arrayBuffer());
+            return { 
+              id: file.id, 
+              name: file.name,
+              buffer 
+            };
+          } catch (error) {
+            console.error(`Error downloading file ${file.name || file.id}:`, error);
+            return null;
+          }
+        })
+      );
+      
+      // Filter out any null results and add the successful ones
+      batchResults.filter(Boolean).forEach(item => {
+        if (item) results.push(item);
+      });
+      
+      // Add a small delay between batches to avoid rate limiting
+      if (i + MAX_CONCURRENT_DOWNLOADS < this.listFiles.length) {
+        console.log("Adding delay between batches to avoid rate limiting");
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    console.log(`Downloaded ${results.length} images for analysis`);
+    return results;
+  }
 }
