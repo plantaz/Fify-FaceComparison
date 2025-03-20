@@ -69,10 +69,6 @@ export function registerRoutes(app: Express): void {
     try {
       const jobId = parseInt(req.params.jobId);
       
-      // Log all incoming request data for debugging
-      console.log("[API] Analyze request body keys:", Object.keys(req.body));
-      console.log("[API] File included:", !!req.file);
-      
       // Extract form values
       const awsAccessKeyId = req.body.awsAccessKeyId;
       const awsSecretAccessKey = req.body.awsSecretAccessKey;
@@ -127,9 +123,9 @@ export function registerRoutes(app: Express): void {
         return res.status(400).json({ error: "AWS credentials are required" });
       }
 
-      // Lambda safe timeout (4 seconds to be ultra-safe for Lambda)
+      // Lambda safe timeout (3 seconds timeout for ultra-safety)
       const startTime = Date.now();
-      const SAFE_TIMEOUT = 4000;
+      const SAFE_TIMEOUT = 3000; // Only 3 seconds to be ultra conservative
       
       // Create Rekognition client
       const rekognition = new RekognitionClient({
@@ -153,22 +149,39 @@ export function registerRoutes(app: Express): void {
           results = existingJob.results;
           startIndex = parsedToken.nextIndex;
           
-          // Get reference image from storage
+          // Get reference image ID from storage
           if (!parsedToken.referenceImageId) {
             return res.status(400).json({ error: "Reference image ID missing in continuation token" });
           }
           
-          // Reference image will be fetched from Drive using the ID
-          try {
-            const imageUrl = `https://lh3.googleusercontent.com/d/${parsedToken.referenceImageId}=s400`;
-            const imageResponse = await fetch(imageUrl);
-            if (!imageResponse.ok) {
-              return res.status(400).json({ error: "Failed to fetch reference image" });
+          // Reference image will be fetched from Drive or from uploaded image
+          if (parsedToken.referenceImageId === "reference") {
+            // This is an uploaded image that we'll use directly from the request
+            if (!req.file || !req.file.buffer) {
+              // We need the reference image in the first request
+              if (startIndex === 0) {
+                return res.status(400).json({ error: "Reference image buffer not found" });
+              }
+              
+              // If not the first request, let's use a special continuation logic
+              // with a dummy buffer that will get replaced below
+              referenceImageBuffer = Buffer.from([]);
+            } else {
+              referenceImageBuffer = req.file.buffer;
             }
-            const arrayBuffer = await imageResponse.arrayBuffer();
-            referenceImageBuffer = Buffer.from(arrayBuffer);
-          } catch (error) {
-            return res.status(400).json({ error: "Failed to load reference image: " + (error as Error).message });
+          } else {
+            // Fetch reference image from Drive or storage
+            try {
+              const imageUrl = `https://lh3.googleusercontent.com/d/${parsedToken.referenceImageId}=s400`;
+              const imageResponse = await fetch(imageUrl);
+              if (!imageResponse.ok) {
+                return res.status(400).json({ error: "Failed to fetch reference image" });
+              }
+              const arrayBuffer = await imageResponse.arrayBuffer();
+              referenceImageBuffer = Buffer.from(arrayBuffer);
+            } catch (error) {
+              return res.status(400).json({ error: "Failed to load reference image: " + (error as Error).message });
+            }
           }
         }
       } else {
@@ -178,34 +191,96 @@ export function registerRoutes(app: Express): void {
         }
         referenceImageBuffer = req.file.buffer;
         
-        // Store the reference image in Drive or wherever needed for future requests
-        // For now, we'll just use a placeholder ID for demo
+        // Store the reference image ID for future requests
         parsedToken = { referenceImageId: "reference", nextIndex: 0 };
       }
       
-      // Ensure we have a reference image buffer
-      if (!referenceImageBuffer) {
-        return res.status(400).json({ error: "Failed to load reference image" });
+      // Ensure we have a valid reference image buffer
+      if (!referenceImageBuffer || referenceImageBuffer.length === 0) {
+        if (startIndex > 0 && req.file && req.file.buffer) {
+          // Use the uploaded file if available
+          referenceImageBuffer = req.file.buffer;
+        } else {
+          return res.status(400).json({ error: "Failed to load reference image" });
+        }
       }
 
-      // Get or initialize provider
+      // Get or initialize provider - don't scan directory each time, 
+      // only do it once initially or when token indicates index 0
       const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
       
-      // Get image list (this will use smaller s400 versions)
-      await provider.scanDirectory(job.driveUrl);
+      // Only initialize if this is the first batch or we're starting fresh
+      if (startIndex === 0) {
+        await provider.scanDirectory(job.driveUrl);
+      }
+      
+      // Check remaining time before getting images
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.5) {
+        // Already used half our budget, return early with continuation token
+        console.log(`[API] Approaching time limit before fetching images`);
+        
+        // Create continuation token to restart
+        const nextToken = JSON.stringify({
+          referenceImageId: parsedToken.referenceImageId,
+          nextIndex: startIndex
+        });
+        
+        // Return current results with continuation token
+        return res.json({
+          ...job,
+          results,
+          continuationToken: nextToken,
+          processing: {
+            total: job.imageCount, // Use the count we know from job
+            processed: results.length,
+            isComplete: false,
+            nextIndex: startIndex
+          }
+        });
+      }
+      
+      // Get image list (this uses smaller s200 versions now)
       const images = await provider.getImages();
       
-      console.log(`[API] Total images: ${images.length}, starting from index: ${startIndex}`);
+      if (images.length === 0) {
+        return res.status(500).json({ error: "No images found in Drive folder" });
+      }
       
-      // Process a very small batch of images (max 2 per Lambda invocation)
-      // This is ultra conservative to ensure each Lambda invocation completes quickly
-      const BATCH_SIZE = 2;
+      console.log(`[API] Total images: ${images.length}, processing index: ${startIndex}`);
+      
+      // Process ONE image per Lambda invocation
+      // This is ultra, ultra conservative to ensure we complete within the Lambda time limit
+      const BATCH_SIZE = 1;
       const endIndex = Math.min(startIndex + BATCH_SIZE, images.length);
       let isComplete = false;
       
+      // Check if we're approaching timeout before even starting the processing loop
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.7) {
+        console.log(`[API] Already approaching time limit before processing, returning continuation token`);
+        
+        // Create continuation token for next batch
+        const nextToken = JSON.stringify({
+          referenceImageId: parsedToken.referenceImageId, 
+          nextIndex: startIndex
+        });
+        
+        // Return continuation token immediately
+        return res.json({
+          ...job,
+          results,
+          continuationToken: nextToken,
+          processing: {
+            total: images.length,
+            processed: results.length,
+            isComplete: false,
+            nextIndex: startIndex
+          }
+        });
+      }
+      
       // Process each image in sequence until timeout approaches
       for (let i = startIndex; i < endIndex; i++) {
-        // Check if we're approaching Lambda timeout more aggressively
+        // Check if we're approaching Lambda timeout
         if (Date.now() - startTime > SAFE_TIMEOUT) {
           console.log(`[API] Approaching time limit, stopping at index ${i}`);
           

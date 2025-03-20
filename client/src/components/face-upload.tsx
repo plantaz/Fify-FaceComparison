@@ -69,8 +69,8 @@ export default function FaceUpload({
       lastPollTimeRef.current = Date.now();
       const formData = new FormData();
       
-      // Only append the face image if it's the first request
-      if (file && !continuationToken) {
+      // Only append the face image if it's the first request or we need to reestablish the reference
+      if (file) {
         formData.append("face", file);
       }
 
@@ -99,48 +99,89 @@ export default function FaceUpload({
         console.log("Using continuation token for batch processing");
       }
 
-      const res = await fetch(`/api/analyze/${jobId}`, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        const errorDetails = await res.json();
-        throw new Error("Analysis failed: " + (errorDetails.error || "Unknown error"));
-      }
+      // Use a timeout to prevent hanging forever on Lambda timeouts
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 second timeout
       
-      const data = await res.json();
-      setIsContinuing(false);
-      
-      // Store the continuation token if provided
-      if (data.continuationToken) {
-        setContinuationToken(data.continuationToken);
-      } else {
-        setContinuationToken(null);
-      }
-      
-      // Check if we need to start polling or continue processing
-      if (data.processing && !data.processing.isComplete) {
-        setProgress({
-          processed: data.processing.processed,
-          total: data.processing.total
+      try {
+        const res = await fetch(`/api/analyze/${jobId}`, {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+          signal: controller.signal
         });
         
-        // If we have a continuation token, continue processing after a sufficient delay
-        if (data.continuationToken) {
-          // Wait longer between batches to prevent overwhelming the server
-          setTimeout(() => {
-            analyzeMutation.mutate();
-          }, 5000); // Longer delay (5 seconds) between batches
-        } else {
-          // Otherwise fall back to polling
-          setIsPolling(true);
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errorDetails = await res.json();
+          throw new Error("Analysis failed: " + (errorDetails.error || "Unknown error"));
         }
+        
+        const data = await res.json();
+        setIsContinuing(false);
+        
+        // Store the continuation token if provided
+        if (data.continuationToken) {
+          setContinuationToken(data.continuationToken);
+        } else {
+          setContinuationToken(null);
+        }
+        
+        // Check if we need to start polling or continue processing
+        if (data.processing && !data.processing.isComplete) {
+          setProgress({
+            processed: data.processing.processed,
+            total: data.processing.total
+          });
+          
+          // If we have a continuation token, continue processing after a sufficient delay
+          if (data.continuationToken) {
+            // Wait longer between batches to prevent overwhelming the server
+            // Use a slightly randomized delay to prevent thundering herd
+            const delayMs = 5000 + Math.floor(Math.random() * 1000);
+            setTimeout(() => {
+              analyzeMutation.mutate();
+            }, delayMs); 
+          } else {
+            // Otherwise fall back to polling
+            setIsPolling(true);
+          }
+          return data;
+        }
+        
         return data;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        
+        // If it's an AbortError, this is a timeout - try again with continuation
+        if ((error as Error).name === 'AbortError') {
+          console.log("Request timed out, will continue with token");
+          
+          // If we have a continuation token, we can try again
+          if (continuationToken) {
+            // Wait a bit longer before retry
+            setTimeout(() => {
+              analyzeMutation.mutate();
+            }, 8000); // Wait 8 seconds before retry after timeout
+          } else {
+            // Start polling as fallback
+            setIsPolling(true);
+          }
+          
+          // Return a fake response to prevent error handling
+          return {
+            processing: {
+              isComplete: false,
+              processed: progress?.processed || 0,
+              total: progress?.total || imageCount
+            }
+          };
+        }
+        
+        // For other errors, rethrow to trigger onError
+        throw error;
       }
-      
-      return data;
     },
     onSuccess: (data) => {
       setScanJob(data);
@@ -163,11 +204,14 @@ export default function FaceUpload({
     onError: (error) => {
       setIsContinuing(false);
       try {
-        toast({
-          variant: "destructive",
-          title: getTranslation("error.generic", language),
-          description: error.message || "An unknown error occurred",
-        });
+        // Don't toast on abort errors (handled in mutation function)
+        if ((error as Error).name !== 'AbortError') {
+          toast({
+            variant: "destructive",
+            title: getTranslation("error.generic", language),
+            description: (error as Error).message || "An unknown error occurred",
+          });
+        }
         
         // If we encounter an error with a continuation token, we can
         // try again after a longer delay
@@ -200,60 +244,83 @@ export default function FaceUpload({
           
           lastPollTimeRef.current = Date.now();
           
-          // Simple GET request to check job status
-          const res = await fetch(`/api/jobs/${jobId}`, { 
-            method: "GET",
-            credentials: "include" 
-          });
+          // Use a timeout to prevent hanging on network issues
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
           
-          if (res.ok) {
-            const data = await res.json();
-            setScanJob(data);
+          try {
+            // Simple GET request to check job status
+            const res = await fetch(`/api/jobs/${jobId}`, { 
+              method: "GET",
+              credentials: "include",
+              signal: controller.signal
+            });
             
-            // If the response contains a continuation token, switch to direct processing
-            if (data.continuationToken) {
-              setContinuationToken(data.continuationToken);
-              setIsPolling(false);
-              // Trigger the next batch after a delay
-              setTimeout(() => {
-                analyzeMutation.mutate();
-              }, 5000); // 5 second delay before next batch
-              return;
-            }
+            clearTimeout(timeoutId);
             
-            // Check if processing is complete
-            if (data.status === 'complete' || 
-                (data.processing && data.processing.isComplete)) {
-              setIsPolling(false);
-              onAnalysisComplete();
-            } else if (data.processing) {
-              // Update progress
-              setProgress({
-                processed: data.processing.processed,
-                total: data.processing.total
-              });
+            if (res.ok) {
+              const data = await res.json();
+              setScanJob(data);
               
-              // Throttle polling based on image count but ensure minimum interval
-              const baseInterval = data.processing.total > 100 ? 5000 : 8000;
-              pollTimerRef.current = window.setTimeout(pollForResults, baseInterval);
+              // If the response contains a continuation token, switch to direct processing
+              if (data.continuationToken) {
+                setContinuationToken(data.continuationToken);
+                setIsPolling(false);
+                // Trigger the next batch after a delay
+                setTimeout(() => {
+                  analyzeMutation.mutate();
+                }, 5000); // 5 second delay before next batch
+                return;
+              }
+              
+              // Check if processing is complete
+              if (data.status === 'complete' || 
+                  (data.processing && data.processing.isComplete)) {
+                setIsPolling(false);
+                onAnalysisComplete();
+              } else if (data.processing) {
+                // Update progress
+                setProgress({
+                  processed: data.processing.processed,
+                  total: data.processing.total
+                });
+                
+                // Throttle polling based on image count but ensure minimum interval
+                // Use a slightly randomized interval to prevent synchronized requests
+                const baseInterval = data.processing.total > 100 ? 8000 : 10000;
+                const randomizedInterval = baseInterval + Math.floor(Math.random() * 2000);
+                pollTimerRef.current = window.setTimeout(pollForResults, randomizedInterval);
+              } else {
+                // If we have results but no processing info, poll less frequently
+                pollTimerRef.current = window.setTimeout(pollForResults, 15000);
+              }
             } else {
-              // If we have results but no processing info, poll less frequently
-              pollTimerRef.current = window.setTimeout(pollForResults, 10000);
+              // On error, wait longer and retry
+              console.warn("Error polling for results, will retry in 15 seconds");
+              pollTimerRef.current = window.setTimeout(pollForResults, 15000);
             }
-          } else {
-            // On error, wait longer and retry
-            console.warn("Error polling for results, will retry in 10 seconds");
-            pollTimerRef.current = window.setTimeout(pollForResults, 10000);
+          } catch (fetchError) {
+            clearTimeout(timeoutId);
+            
+            // If it's an abort error, handle the timeout
+            if ((fetchError as Error).name === 'AbortError') {
+              console.warn("Polling request timed out, will retry in 15 seconds");
+            } else {
+              console.error("Error polling for results:", fetchError);
+            }
+            
+            // On any errors, retry after a longer delay
+            pollTimerRef.current = window.setTimeout(pollForResults, 15000);
           }
         } catch (error) {
-          console.error("Error polling for results:", error);
-          // On network errors, retry after a longer delay
-          pollTimerRef.current = window.setTimeout(pollForResults, 10000);
+          // On any unexpected errors, retry after an even longer delay
+          console.error("Unexpected error during polling:", error);
+          pollTimerRef.current = window.setTimeout(pollForResults, 20000);
         }
       };
       
       // Start polling with a small initial delay
-      pollTimerRef.current = window.setTimeout(pollForResults, 1000);
+      pollTimerRef.current = window.setTimeout(pollForResults, 2000);
       
       // Cleanup function
       return () => {

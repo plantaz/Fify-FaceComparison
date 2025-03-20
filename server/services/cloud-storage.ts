@@ -39,21 +39,48 @@ class GoogleStorageProvider implements CloudStorageProvider {
       }
 
       const folderId = folderPathMatch[1];
+      this.listFiles = []; // Reset the list
+      
+      // Use pagination to get all files (Google Drive API only returns up to 100 files per request)
+      let nextPageToken: string | undefined;
+      let totalFetched = 0;
+      
+      do {
+        // Build the URL with pageToken if we have one
+        let apiUrl = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&pageSize=1000&key=${this.apiKey}`;
+        if (nextPageToken) {
+          apiUrl += `&pageToken=${nextPageToken}`;
+        }
+        
+        console.log(`Fetching Drive files page ${nextPageToken ? "with token" : "1"}`);
+        
+        const response = await fetch(apiUrl);
+        const data = await response.json();
 
-      const DRIVE_API_URL = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&key=${this.apiKey}`;
-      const response = await fetch(DRIVE_API_URL);
-      const data = await response.json();
+        if (data.error) {
+          throw new Error(
+            `Google Drive API error: ${data.error.message || "Unknown error"}`,
+          );
+        }
 
-      if (data.error) {
-        throw new Error(
-          `Google Drive API error: ${data.error.message || "Unknown error"}`,
+        // Filter for only image files and add to our list
+        const pageFiles = data.files.filter((file: any) =>
+          file.mimeType?.startsWith("image/")
         );
-      }
-
-      // Filter for only image files
-      this.listFiles = data.files.filter((file: any) =>
-        file.mimeType?.startsWith("image/"),
-      );
+        
+        this.listFiles.push(...pageFiles);
+        totalFetched += pageFiles.length;
+        console.log(`Added ${pageFiles.length} images from page, total: ${totalFetched}`);
+        
+        // Check if there are more pages
+        nextPageToken = data.nextPageToken;
+        
+        // Add a small delay between pagination requests to avoid rate limiting
+        if (nextPageToken) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+      } while (nextPageToken);
 
       console.log(`Found ${this.listFiles.length} images in Google Drive folder`);
       return this.listFiles.length;
