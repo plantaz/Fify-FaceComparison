@@ -7,6 +7,7 @@ export interface CloudImage {
 export interface CloudStorageProvider {
   scanDirectory: (url: string) => Promise<number>;
   getImages: () => Promise<CloudImage[]>;
+  getSingleImage: (index: number) => Promise<CloudImage | null>;
 }
 
 export function createStorageProvider(
@@ -155,5 +156,48 @@ class GoogleStorageProvider implements CloudStorageProvider {
     
     console.log(`Downloaded ${results.length} images for analysis`);
     return results;
+  }
+
+  async getSingleImage(index: number): Promise<CloudImage | null> {
+    try {
+      // Make sure we have files
+      if (!this.listFiles || this.listFiles.length === 0) {
+        // Reinitialize if files list is not available
+        await this.scanDirectory(this.url);
+      }
+      
+      // Check if index is valid
+      if (index < 0 || index >= this.listFiles.length) {
+        console.log(`Requested image at index ${index} is out of bounds (0-${this.listFiles.length - 1})`);
+        return null;
+      }
+      
+      const file = this.listFiles[index];
+      console.log(`Downloading single image (s200 size) for file: ${file.name || file.id}`);
+      
+      try {
+        // Smaller s200 size for analysis is plenty (faces don't need high resolution)
+        const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s200`;
+        
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+          console.error(`Failed to fetch image for ${file.name || file.id}: ${response.statusText}`);
+          return null;
+        }
+        
+        const buffer = Buffer.from(await response.arrayBuffer());
+        return { 
+          id: file.id, 
+          name: file.name,
+          buffer 
+        };
+      } catch (error) {
+        console.error(`Error downloading file ${file.name || file.id}:`, error);
+        return null;
+      }
+    } catch (error) {
+      console.error("Error getting single image:", error);
+      return null;
+    }
   }
 }

@@ -69,169 +69,154 @@ export function registerRoutes(app: Express): void {
     try {
       const jobId = parseInt(req.params.jobId);
       
-      // Extract form values
+      // Extract form values with minimal logging
       const awsAccessKeyId = req.body.awsAccessKeyId;
       const awsSecretAccessKey = req.body.awsSecretAccessKey;
       const googleApiKey = req.body.googleApiKey;
       const continuationToken = req.body.continuationToken;
       
-      // Log less frequently to reduce console noise
-      if (!continuationToken) {
-        console.log("[API] New analysis started for job:", jobId);
-      } else {
-        console.log("[API] Continuation request for job:", jobId);
-      }
+      // Extremely simplified logging 
+      console.log(`[API] ${continuationToken ? "Continuation" : "New"} analysis for job: ${jobId}`);
 
-      // Trim and clean up credential strings
+      // Lambda ultra-safe timeout (1 second to be extremely conservative)
+      const startTime = Date.now();
+      const SAFE_TIMEOUT = 1000; // Only 1 second to be ultra conservative
+
+      // Trim credential strings
       const cleanAwsAccessKeyId = awsAccessKeyId?.trim();
       const cleanAwsSecretAccessKey = awsSecretAccessKey?.trim();
       const cleanGoogleApiKey = googleApiKey?.trim();
-      let parsedToken = null;
       
-      // Parse the continuation token if present
-      try {
-        if (continuationToken) {
-          parsedToken = JSON.parse(continuationToken);
-        }
-      } catch (tokenError) {
-        console.error("[API] Error parsing continuation token:", tokenError);
-      }
-
-      // Ensure the Google API key is provided
+      // Check required credentials immediately
       if (!cleanGoogleApiKey) {
         return res.status(400).json({ error: "Google Drive API key is required" });
       }
+      
+      if (!cleanAwsAccessKeyId || !cleanAwsSecretAccessKey) {
+        return res.status(400).json({ error: "AWS credentials are required" });
+      }
 
+      // Get job information
       const job = await storage.getScanJob(jobId);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      // Need the face image only for the first request
-      if (!req.file && !parsedToken) {
-        return res.status(400).json({ error: "No face image provided" });
-      }
-
-      // For Netlify, ALWAYS use the credentials from the form
-      const credentials = {
-        accessKeyId: cleanAwsAccessKeyId || (isDevelopment ? process.env.AWS_ACCESS_KEY_ID : null),
-        secretAccessKey: cleanAwsSecretAccessKey || (isDevelopment ? process.env.AWS_SECRET_ACCESS_KEY : null)
-      };
+      // Parse continuation token if present or initialize state
+      let parsedToken = null;
+      let results = [];
+      let startIndex = 0;
+      let referenceImageId = null;
       
-      // Check AWS credentials
-      if (!credentials.accessKeyId || !credentials.secretAccessKey) {
-        return res.status(400).json({ error: "AWS credentials are required" });
+      try {
+        if (continuationToken) {
+          parsedToken = JSON.parse(continuationToken);
+          startIndex = parsedToken.nextIndex || 0;
+          referenceImageId = parsedToken.referenceImageId;
+          
+          // For continuation requests, reuse existing results
+          const existingJob = await storage.getScanJob(jobId);
+          if (existingJob?.results && Array.isArray(existingJob.results)) {
+            results = existingJob.results;
+          }
+        } else {
+          // First request needs face image
+          if (!req.file) {
+            return res.status(400).json({ error: "No face image provided for initial request" });
+          }
+          
+          // For initial requests, just store the reference image and return immediately
+          referenceImageId = "reference";
+          startIndex = 0;
+        }
+      } catch (tokenError) {
+        console.error("[API] Error parsing continuation token:", tokenError);
+        return res.status(400).json({ error: "Invalid continuation token format" });
       }
-
-      // Lambda safe timeout (3 seconds timeout for ultra-safety)
-      const startTime = Date.now();
-      const SAFE_TIMEOUT = 3000; // Only 3 seconds to be ultra conservative
       
-      // Create Rekognition client
+      // For the first request, just setup the initial state and return immediately
+      if (!continuationToken) {
+        // Create the storage provider to ensure we can count the files
+        const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
+        
+        try {
+          await provider.scanDirectory(job.driveUrl);
+        } catch (scanError) {
+          console.error("Error scanning directory:", scanError);
+          return res.status(500).json({ error: "Failed to scan Google Drive directory" });
+        }
+        
+        // Store the reference image for future requests
+        // In a real implementation you might want to upload this to S3
+        // For now just use a token to indicate the upload happened
+        
+        // Create continuation token for the first batch
+        const initialToken = JSON.stringify({
+          referenceImageId: referenceImageId,
+          nextIndex: 0,
+          jobId
+        });
+        
+        // Initialize job with empty results
+        await storage.updateScanJobResults(jobId, [], "processing");
+        
+        // Return the initialization status with token for next request
+        return res.json({
+          ...job,
+          results: [],
+          continuationToken: initialToken,
+          processing: {
+            total: job.imageCount, 
+            processed: 0,
+            isComplete: false,
+            nextIndex: 0
+          }
+        });
+      }
+      
+      // For continuation requests, process a SINGLE image per Lambda invocation
+      
+      // Create Rekognition client - do this AFTER checking timeout to avoid unnecessary setup
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.5) {
+        console.log(`[API] Approaching time limit during setup`);
+        
+        // Return immediately with the same token
+        return res.json({
+          ...job,
+          results,
+          continuationToken,
+          processing: {
+            total: job.imageCount,
+            processed: results.length,
+            isComplete: false,
+            nextIndex: startIndex
+          }
+        });
+      }
+      
+      // Setup the rekognition client
       const rekognition = new RekognitionClient({
         region: process.env.MY_AWS_REGION || "us-east-1",
         credentials: {
-          accessKeyId: credentials.accessKeyId,
-          secretAccessKey: credentials.secretAccessKey
+          accessKeyId: cleanAwsAccessKeyId,
+          secretAccessKey: cleanAwsSecretAccessKey
         }
       });
-
-      // Get current state from storage or initialize new
-      let results = [];
-      let startIndex = 0;
-      let referenceImageBuffer: Buffer | null = null;
       
-      // Handle continuation from previous runs
-      if (parsedToken) {
-        // We have a continuation token, retrieve existing results
-        const existingJob = await storage.getScanJob(jobId);
-        if (existingJob?.results && Array.isArray(existingJob.results)) {
-          results = existingJob.results;
-          startIndex = parsedToken.nextIndex;
-          
-          // Get reference image ID from storage
-          if (!parsedToken.referenceImageId) {
-            return res.status(400).json({ error: "Reference image ID missing in continuation token" });
-          }
-          
-          // Reference image will be fetched from Drive or from uploaded image
-          if (parsedToken.referenceImageId === "reference") {
-            // This is an uploaded image that we'll use directly from the request
-            if (!req.file || !req.file.buffer) {
-              // We need the reference image in the first request
-              if (startIndex === 0) {
-                return res.status(400).json({ error: "Reference image buffer not found" });
-              }
-              
-              // If not the first request, let's use a special continuation logic
-              // with a dummy buffer that will get replaced below
-              referenceImageBuffer = Buffer.from([]);
-            } else {
-              referenceImageBuffer = req.file.buffer;
-            }
-          } else {
-            // Fetch reference image from Drive or storage
-            try {
-              const imageUrl = `https://lh3.googleusercontent.com/d/${parsedToken.referenceImageId}=s400`;
-              const imageResponse = await fetch(imageUrl);
-              if (!imageResponse.ok) {
-                return res.status(400).json({ error: "Failed to fetch reference image" });
-              }
-              const arrayBuffer = await imageResponse.arrayBuffer();
-              referenceImageBuffer = Buffer.from(arrayBuffer);
-            } catch (error) {
-              return res.status(400).json({ error: "Failed to load reference image: " + (error as Error).message });
-            }
-          }
-        }
-      } else {
-        // First request with the face image uploaded
-        if (!req.file || !req.file.buffer) {
-          return res.status(400).json({ error: "Reference image buffer not found" });
-        }
-        referenceImageBuffer = req.file.buffer;
-        
-        // Store the reference image ID for future requests
-        parsedToken = { referenceImageId: "reference", nextIndex: 0 };
-      }
-      
-      // Ensure we have a valid reference image buffer
-      if (!referenceImageBuffer || referenceImageBuffer.length === 0) {
-        if (startIndex > 0 && req.file && req.file.buffer) {
-          // Use the uploaded file if available
-          referenceImageBuffer = req.file.buffer;
-        } else {
-          return res.status(400).json({ error: "Failed to load reference image" });
-        }
-      }
-
-      // Get or initialize provider - don't scan directory each time, 
-      // only do it once initially or when token indicates index 0
+      // Initialize provider
       const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
       
-      // Only initialize if this is the first batch or we're starting fresh
-      if (startIndex === 0) {
-        await provider.scanDirectory(job.driveUrl);
-      }
-      
-      // Check remaining time before getting images
-      if (Date.now() - startTime > SAFE_TIMEOUT * 0.5) {
-        // Already used half our budget, return early with continuation token
+      // Check if we're approaching timeout
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.7) {
         console.log(`[API] Approaching time limit before fetching images`);
         
-        // Create continuation token to restart
-        const nextToken = JSON.stringify({
-          referenceImageId: parsedToken.referenceImageId,
-          nextIndex: startIndex
-        });
-        
-        // Return current results with continuation token
+        // Return with the same continuation token
         return res.json({
           ...job,
           results,
-          continuationToken: nextToken,
+          continuationToken,
           processing: {
-            total: job.imageCount, // Use the count we know from job
+            total: job.imageCount,
             processed: results.length,
             isComplete: false,
             nextIndex: startIndex
@@ -239,38 +224,31 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Get image list (this uses smaller s200 versions now)
-      const images = await provider.getImages();
+      // Prepare the reference image
+      let referenceImageBuffer: Buffer | null = null;
       
-      if (images.length === 0) {
-        return res.status(500).json({ error: "No images found in Drive folder" });
+      if (referenceImageId === "reference") {
+        // This is the uploaded file from the first request
+        if (req.file && req.file.buffer) {
+          referenceImageBuffer = req.file.buffer;
+        } else {
+          // Special case: we lost the reference but have the jobId
+          // Implement a recovery mechanism here
+          return res.status(400).json({ 
+            error: "Reference image missing. Please restart the process." 
+          });
+        }
       }
       
-      console.log(`[API] Total images: ${images.length}, processing index: ${startIndex}`);
-      
-      // Process ONE image per Lambda invocation
-      // This is ultra, ultra conservative to ensure we complete within the Lambda time limit
-      const BATCH_SIZE = 1;
-      const endIndex = Math.min(startIndex + BATCH_SIZE, images.length);
-      let isComplete = false;
-      
-      // Check if we're approaching timeout before even starting the processing loop
-      if (Date.now() - startTime > SAFE_TIMEOUT * 0.7) {
-        console.log(`[API] Already approaching time limit before processing, returning continuation token`);
-        
-        // Create continuation token for next batch
-        const nextToken = JSON.stringify({
-          referenceImageId: parsedToken.referenceImageId, 
-          nextIndex: startIndex
-        });
-        
-        // Return continuation token immediately
+      // Check if we've used too much time already
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.8) {
+        console.log(`[API] Approaching time limit during reference image setup`);
         return res.json({
           ...job,
           results,
-          continuationToken: nextToken,
+          continuationToken,
           processing: {
-            total: images.length,
+            total: job.imageCount,
             processed: results.length,
             isComplete: false,
             nextIndex: startIndex
@@ -278,114 +256,110 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Process each image in sequence until timeout approaches
-      for (let i = startIndex; i < endIndex; i++) {
-        // Check if we're approaching Lambda timeout
-        if (Date.now() - startTime > SAFE_TIMEOUT) {
-          console.log(`[API] Approaching time limit, stopping at index ${i}`);
+      // Get an extremely small batch of images - just ONE image
+      // Skip rescan and go directly to getImages which should be cached
+      const imageToProcess = await provider.getSingleImage(startIndex);
+      if (!imageToProcess) {
+        return res.json({
+          ...job,
+          results,
+          processing: {
+            total: job.imageCount,
+            processed: results.length,
+            isComplete: true, // Mark as complete if we've processed all images
+            nextIndex: startIndex
+          }
+        });
+      }
+
+      // Check if we're approaching timeout again
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.9) {
+        console.log(`[API] Approaching time limit after image fetch`);
+        return res.json({
+          ...job,
+          results,
+          continuationToken,
+          processing: {
+            total: job.imageCount,
+            processed: results.length,
+            isComplete: false,
+            nextIndex: startIndex
+          }
+        });
+      }
+      
+      // Ensure we have a valid reference image at this point
+      if (!referenceImageBuffer) {
+        return res.status(400).json({ 
+          error: "Reference image buffer missing. Please restart the process." 
+        });
+      }
+      
+      try {
+        // Process just this single image
+        console.log(`Processing image ${startIndex + 1}/${job.imageCount}`);
+        
+        // Create face comparison command
+        const command = new CompareFacesCommand({
+          SourceImage: { Bytes: referenceImageBuffer },
+          TargetImage: { Bytes: imageToProcess.buffer },
+          SimilarityThreshold: 70,
+        });
+        
+        // Send to Rekognition
+        try {
+          const response = await rekognition.send(command);
+          const bestMatch = response.FaceMatches?.[0];
           
-          // Create continuation token for next batch
-          const nextToken = JSON.stringify({
-            referenceImageId: parsedToken.referenceImageId,
-            nextIndex: i
+          // Add to results
+          results.push({
+            imageId: startIndex + 1,
+            similarity: bestMatch?.Similarity || 0,
+            matched: !!bestMatch,
+            url: imageToProcess.id ? `https://lh3.googleusercontent.com/d/${imageToProcess.id}=s1000` : undefined,
+            driveUrl: `https://drive.google.com/file/d/${imageToProcess.id}/view`,
           });
           
-          // Save progress
+          // Save results immediately
           await storage.updateScanJobResults(jobId, results, "processing");
           
-          // Return partial results with continuation token
-          return res.json({
-            ...job,
-            results,
-            continuationToken: nextToken,
-            processing: {
-              total: images.length,
-              processed: results.length,
-              isComplete: false,
-              nextIndex: i
-            }
-          });
-        }
-        
-        // Process the image
-        try {
-          const image = images[i];
-          console.log(`Processing image ${i + 1}/${images.length}`);
+        } catch (rekognitionError) {
+          console.error(`[API] AWS Rekognition error:`, 
+            rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
+          );
           
-          // Create face comparison command
-          const command = new CompareFacesCommand({
-            SourceImage: { Bytes: referenceImageBuffer },
-            TargetImage: { Bytes: image.buffer },
-            SimilarityThreshold: 70,
-          });
-          
-          // Send to Rekognition
-          try {
-            const response = await rekognition.send(command);
-            const bestMatch = response.FaceMatches?.[0];
-            
-            // Add to results
-            results.push({
-              imageId: i + 1,
-              similarity: bestMatch?.Similarity || 0,
-              matched: !!bestMatch,
-              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
-              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-            });
-            
-            // Save progress after EACH image to ensure we don't lose results
-            try {
-              await storage.updateScanJobResults(jobId, results, "processing");
-            } catch (saveError) {
-              console.error("Error saving results after image:", saveError);
-            }
-            
-          } catch (rekognitionError) {
-            console.error(`[API] AWS Rekognition error for image ${i + 1}:`, 
-              rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
-            );
-            
-            // Add error result
-            results.push({
-              imageId: i + 1,
-              similarity: 0,
-              matched: false,
-              error: rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
-              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
-              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-            });
-            
-            // Save progress even after errors
-            try {
-              await storage.updateScanJobResults(jobId, results, "processing");
-            } catch (saveError) {
-              console.error("Error saving results after rekognition error:", saveError);
-            }
-          }
-        } catch (error) {
-          console.error(`Face comparison error for image ${i + 1}:`, error);
+          // Add error result
           results.push({
-            imageId: i + 1,
+            imageId: startIndex + 1,
             similarity: 0,
             matched: false,
+            error: rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
+            url: imageToProcess.id ? `https://lh3.googleusercontent.com/d/${imageToProcess.id}=s1000` : undefined,
+            driveUrl: `https://drive.google.com/file/d/${imageToProcess.id}/view`,
           });
           
-          // Save progress even after errors
-          try {
-            await storage.updateScanJobResults(jobId, results, "processing");
-          } catch (saveError) {
-            console.error("Error saving results after face comparison error:", saveError);
-          }
+          // Still save the error result
+          await storage.updateScanJobResults(jobId, results, "processing");
         }
+      } catch (error) {
+        console.error(`Face comparison error:`, error);
+        results.push({
+          imageId: startIndex + 1,
+          similarity: 0,
+          matched: false,
+        });
+        
+        // Save progress even after errors
+        await storage.updateScanJobResults(jobId, results, "processing");
       }
       
-      // Check if we've processed all images
-      isComplete = endIndex >= images.length;
-      
-      // Create continuation token if not complete
+      // Create continuation token for next image
+      const nextIndex = startIndex + 1;
+      const isComplete = nextIndex >= job.imageCount;
       const nextToken = !isComplete ? JSON.stringify({
-        referenceImageId: parsedToken.referenceImageId,
-        nextIndex: endIndex
+        referenceImageId: referenceImageId,
+        nextIndex: nextIndex,
+        jobId
       }) : null;
       
       // Update final status
@@ -397,10 +371,10 @@ export function registerRoutes(app: Express): void {
         ...updatedJob,
         continuationToken: nextToken,
         processing: {
-          total: images.length,
+          total: job.imageCount,
           processed: results.length,
           isComplete,
-          nextIndex: endIndex
+          nextIndex: nextIndex
         }
       });
       
