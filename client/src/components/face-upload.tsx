@@ -35,6 +35,7 @@ export default function FaceUpload({
   const [progress, setProgress] = useState<{ processed: number; total: number } | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const pollTimerRef = useRef<number | null>(null);
+  const [continuationToken, setContinuationToken] = useState<string | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFile(acceptedFiles[0]);
@@ -49,10 +50,14 @@ export default function FaceUpload({
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
-      if (!file) throw new Error("No image has been selected.");
+      if (!file && !continuationToken) throw new Error("No image has been selected.");
 
       const formData = new FormData();
-      formData.append("face", file);
+      
+      // Only append the face image if it's the first request
+      if (file && !continuationToken) {
+        formData.append("face", file);
+      }
 
       // Always require AWS credentials
       if (awsCredentials) {
@@ -77,10 +82,13 @@ export default function FaceUpload({
         throw new Error("Google API Key is missing");
       }
       
-      // Avoid excessive console logging that could cause issues
-      // console.log("Google API Key length:", googleApiKey.length);
-      
       formData.append("googleApiKey", googleApiKey); // Include Google API Key
+      
+      // Include continuation token if we have one
+      if (continuationToken) {
+        formData.append("continuationToken", continuationToken);
+        console.log("Using continuation token for batch processing");
+      }
 
       const res = await fetch(`/api/analyze/${jobId}`, {
         method: "POST",
@@ -90,20 +98,35 @@ export default function FaceUpload({
 
       if (!res.ok) {
         const errorDetails = await res.json();
-        // Avoid console error logs that might trigger hide-notification warnings
-        // console.error("Analysis error details:", errorDetails);
         throw new Error("Analysis failed: " + (errorDetails.error || "Unknown error"));
       }
       
       const data = await res.json();
       
-      // Check if we need to start polling (partial results)
+      // Store the continuation token if provided
+      if (data.continuationToken) {
+        setContinuationToken(data.continuationToken);
+      } else {
+        setContinuationToken(null);
+      }
+      
+      // Check if we need to start polling or continue processing
       if (data.processing && !data.processing.isComplete) {
         setProgress({
           processed: data.processing.processed,
           total: data.processing.total
         });
-        setIsPolling(true);
+        
+        // If we have a continuation token, continue processing immediately
+        if (data.continuationToken) {
+          // Wait a moment to let Lambda reset, then continue
+          setTimeout(() => {
+            analyzeMutation.mutate();
+          }, 2000); // Short delay before next batch
+        } else {
+          // Otherwise fall back to polling
+          setIsPolling(true);
+        }
         return data;
       }
       
@@ -112,22 +135,37 @@ export default function FaceUpload({
     onSuccess: (data) => {
       setScanJob(data);
       
+      // If we need to process more batches with continuation token, don't mark as complete yet
+      if (continuationToken && data.processing && !data.processing.isComplete) {
+        return; // The mutation will auto-trigger another round via setTimeout above
+      }
+      
       // Only mark as complete if processing is actually done
       if (!data.processing || data.processing.isComplete) {
         onAnalysisComplete();
-      } else {
-        // Start polling for updates if not complete
+        setContinuationToken(null); // Clear token when done
+      } else if (!continuationToken) {
+        // If we don't have a continuation token but process isn't complete,
+        // start polling as fallback
         setIsPolling(true);
       }
     },
     onError: (error) => {
-      // Remove error logging to console to prevent "hide-notification" warnings
       try {
         toast({
           variant: "destructive",
           title: getTranslation("error.generic", language),
           description: error.message || "An unknown error occurred",
         });
+        
+        // If we encounter an error with a continuation token, we can
+        // try again in a moment (could be a Lambda cold start issue)
+        if (continuationToken) {
+          setTimeout(() => {
+            // Retry with the same token
+            analyzeMutation.mutate();
+          }, 5000); // Wait 5 seconds before retry
+        }
       } catch (toastError) {
         // Silently handle any toast errors
       }
@@ -148,6 +186,17 @@ export default function FaceUpload({
           if (res.ok) {
             const data = await res.json();
             setScanJob(data);
+            
+            // If the response contains a continuation token, switch to direct processing
+            if (data.continuationToken) {
+              setContinuationToken(data.continuationToken);
+              setIsPolling(false);
+              // Trigger the next batch
+              setTimeout(() => {
+                analyzeMutation.mutate();
+              }, 1000);
+              return;
+            }
             
             // Check if processing is complete
             if (data.status === 'complete' || 
@@ -191,7 +240,7 @@ export default function FaceUpload({
         }
       };
     }
-  }, [isPolling, jobId, setScanJob, onAnalysisComplete, analyzeMutation.isPending]);
+  }, [isPolling, jobId, setScanJob, onAnalysisComplete, analyzeMutation.isPending, analyzeMutation.mutate]);
 
   const handleAnalyze = () => {
     // Always require AWS credentials
@@ -208,7 +257,7 @@ export default function FaceUpload({
       return;
     }
 
-    if (!file) {
+    if (!file && !continuationToken) {
       try {
         toast({
           variant: "destructive",

@@ -117,14 +117,10 @@ export class GoogleDriveProvider implements CloudStorageProvider {
 
       const downloadPromises = data.files.map(async (file: { id: string }) => {
         try {
-          const imageResponse = await fetch(
-            `https://lh3.googleusercontent.com/d/${file.id}=s1000`,
-            {
-              headers: {
-                Authorization: `Bearer ${this.apiKey}`
-              }
-            }
-          );
+          const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s400`;
+          console.log(`Downloading smaller image version from: ${imageUrl}`);
+          
+          const imageResponse = await fetch(imageUrl);
 
           if (imageResponse.ok) {
             const arrayBuffer = await imageResponse.arrayBuffer();
@@ -143,6 +139,7 @@ export class GoogleDriveProvider implements CloudStorageProvider {
       pageToken = data.nextPageToken;
     } while (pageToken);
 
+    console.log(`Successfully downloaded ${images.length} smaller image versions`);
     return images;
   }
 }

@@ -73,26 +73,40 @@ export function registerRoutes(app: Express): void {
       console.log("[API] Analyze request body keys:", Object.keys(req.body));
       console.log("[API] File included:", !!req.file);
       
-      const { awsAccessKeyId, awsSecretAccessKey, googleApiKey } = req.body;
+      // Extract form values
+      const awsAccessKeyId = req.body.awsAccessKeyId;
+      const awsSecretAccessKey = req.body.awsSecretAccessKey;
+      const googleApiKey = req.body.googleApiKey;
+      const continuationToken = req.body.continuationToken;
+      
+      console.log("[API] Continuation token present:", !!continuationToken);
 
       // Trim and clean up credential strings
       const cleanAwsAccessKeyId = awsAccessKeyId?.trim();
       const cleanAwsSecretAccessKey = awsSecretAccessKey?.trim();
       const cleanGoogleApiKey = googleApiKey?.trim();
+      let parsedToken = null;
+      
+      // Parse the continuation token if present
+      try {
+        if (continuationToken) {
+          parsedToken = JSON.parse(continuationToken);
+          console.log("[API] Parsed token:", JSON.stringify(parsedToken));
+        }
+      } catch (tokenError) {
+        console.error("[API] Error parsing continuation token:", tokenError);
+      }
 
       // Enhanced logging for request body and form data
       console.log("[API] AWS Access Key provided:", !!cleanAwsAccessKeyId);
       console.log("[API] AWS Secret Access Key provided:", !!cleanAwsSecretAccessKey);
       console.log("[API] Google API Key provided:", !!cleanGoogleApiKey);
+      console.log("[API] Parsed token:", !!parsedToken);
       console.log("[API] Face image provided:", !!req.file);
-      console.log("[API] AWS key length:", cleanAwsAccessKeyId?.length);
-      console.log("[API] AWS secret length:", cleanAwsSecretAccessKey?.length);
 
       // Ensure the Google API key is provided
       if (!cleanGoogleApiKey) {
-        return res
-          .status(400)
-          .json({ error: "Google Drive API key is required" });
+        return res.status(400).json({ error: "Google Drive API key is required" });
       }
 
       const job = await storage.getScanJob(jobId);
@@ -100,34 +114,27 @@ export function registerRoutes(app: Express): void {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      if (!req.file) {
+      // Need the face image only for the first request
+      if (!req.file && !parsedToken) {
         return res.status(400).json({ error: "No face image provided" });
       }
 
       // For Netlify, ALWAYS use the credentials from the form
-      // Only use environment variables in development if form credentials are missing
       const credentials = {
         accessKeyId: cleanAwsAccessKeyId || (isDevelopment ? process.env.AWS_ACCESS_KEY_ID : null),
         secretAccessKey: cleanAwsSecretAccessKey || (isDevelopment ? process.env.AWS_SECRET_ACCESS_KEY : null)
       };
-
-      // Log credentials to confirm they exist
-      console.log("[API] AWS Credentials being used:", {
-        accessKeyPresent: !!credentials.accessKeyId,
-        accessKeyLength: credentials.accessKeyId?.length,
-        secretKeyPresent: !!credentials.secretAccessKey,
-        secretKeyLength: credentials.secretAccessKey?.length,
-      });
       
-      // Check AWS credentials more thoroughly
-      if (!credentials.accessKeyId) {
-        return res.status(400).json({ error: "AWS Access Key ID not provided" });
-      }
-      
-      if (!credentials.secretAccessKey) {
-        return res.status(400).json({ error: "AWS Secret Access Key not provided" });
+      // Check AWS credentials
+      if (!credentials.accessKeyId || !credentials.secretAccessKey) {
+        return res.status(400).json({ error: "AWS credentials are required" });
       }
 
+      // Lambda safe timeout (8 seconds to be safe)
+      const startTime = Date.now();
+      const SAFE_TIMEOUT = 8000;
+      
+      // Create Rekognition client
       const rekognition = new RekognitionClient({
         region: process.env.MY_AWS_REGION || "us-east-1",
         credentials: {
@@ -136,185 +143,177 @@ export function registerRoutes(app: Express): void {
         }
       });
 
-      console.log("[API] Created AWS Rekognition client with region:", process.env.MY_AWS_REGION || "us-east-1");
-
-      const referenceImage = req.file.buffer;
-      if (!referenceImage) {
-        return res
-          .status(400)
-          .json({ error: "Reference image buffer not found" });
+      // Get current state from storage or initialize new
+      let results = [];
+      let startIndex = 0;
+      let referenceImageBuffer: Buffer | null = null;
+      
+      // Handle continuation from previous runs
+      if (parsedToken) {
+        // We have a continuation token, retrieve existing results
+        const existingJob = await storage.getScanJob(jobId);
+        if (existingJob?.results && Array.isArray(existingJob.results)) {
+          results = existingJob.results;
+          startIndex = parsedToken.nextIndex;
+          
+          // Get reference image from storage
+          if (!parsedToken.referenceImageId) {
+            return res.status(400).json({ error: "Reference image ID missing in continuation token" });
+          }
+          
+          // Reference image will be fetched from Drive using the ID
+          try {
+            const imageUrl = `https://lh3.googleusercontent.com/d/${parsedToken.referenceImageId}=s400`;
+            const imageResponse = await fetch(imageUrl);
+            if (!imageResponse.ok) {
+              return res.status(400).json({ error: "Failed to fetch reference image" });
+            }
+            const arrayBuffer = await imageResponse.arrayBuffer();
+            referenceImageBuffer = Buffer.from(arrayBuffer);
+          } catch (error) {
+            return res.status(400).json({ error: "Failed to load reference image: " + (error as Error).message });
+          }
+        }
+      } else {
+        // First request with the face image uploaded
+        if (!req.file || !req.file.buffer) {
+          return res.status(400).json({ error: "Reference image buffer not found" });
+        }
+        referenceImageBuffer = req.file.buffer;
+        
+        // Store the reference image in Drive or wherever needed for future requests
+        // For now, we'll just use a placeholder ID for demo
+        parsedToken = { referenceImageId: "reference", nextIndex: 0 };
+      }
+      
+      // Ensure we have a reference image buffer
+      if (!referenceImageBuffer) {
+        return res.status(400).json({ error: "Failed to load reference image" });
       }
 
+      // Get or initialize provider
       const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
+      
+      // Get image list (this will use smaller s400 versions)
       await provider.scanDirectory(job.driveUrl);
       const images = await provider.getImages();
       
-      console.log(`[API] Total images to process: ${images.length}`);
+      console.log(`[API] Total images: ${images.length}, starting from index: ${startIndex}`);
       
-      // Process even smaller batches with an extremely strict timeout limit
-      const BATCH_SIZE = 2; // Process just 2 images at a time
-      let results = [];
-      
-      // Get existing results if any (in case this is a continuation)
-      const existingJob = await storage.getScanJob(jobId);
-      if (existingJob && existingJob.results && Array.isArray(existingJob.results) && existingJob.results.length > 0) {
-        console.log(`[API] Found ${existingJob.results.length} existing results, continuing from there`);
-        results = existingJob.results;
-      }
-      
-      // Calculate how many images we can process within time limit
-      // Lambda has 10s timeout, be extremely conservative with 4s processing time
-      const startTime = Date.now();
-      const LAMBDA_SAFE_TIMEOUT = 4000; // 4 seconds in ms
-      
-      // Set a flag to track if we've processed everything
+      // Process a small batch of images (max 5 per Lambda invocation)
+      const BATCH_SIZE = 5;
+      const endIndex = Math.min(startIndex + BATCH_SIZE, images.length);
       let isComplete = false;
       
-      // Start processing where we left off
-      const startIndex = results.length;
-      let totalProcessed = 0;
-      
-      try {
-        // Process images in batches until timeout approaches
-        for (let i = startIndex; i < images.length; i += BATCH_SIZE) {
-          // Check elapsed time frequently and stop early to ensure we can save results
-          if (Date.now() - startTime > LAMBDA_SAFE_TIMEOUT) {
-            console.log(`[API] Approaching Lambda timeout limit, stopping at ${results.length}/${images.length} images`);
-            // We're approaching the timeout, save what we have and return partial results
-            break;
-          }
+      // Process each image in sequence until timeout approaches
+      for (let i = startIndex; i < endIndex; i++) {
+        // Check if we're approaching Lambda timeout
+        if (Date.now() - startTime > SAFE_TIMEOUT) {
+          console.log(`[API] Approaching time limit, stopping at index ${i}`);
           
-          console.log(`[API] Processing batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(images.length/BATCH_SIZE)}`);
-          const imageBatch = images.slice(i, i + BATCH_SIZE);
+          // Create continuation token for next batch
+          const nextToken = JSON.stringify({
+            referenceImageId: parsedToken.referenceImageId,
+            nextIndex: i
+          });
           
-          // Use traditional for loop to avoid TypeScript iteration issues
-          for (let batchIndex = 0; batchIndex < imageBatch.length; batchIndex++) {
-            const image = imageBatch[batchIndex];
-            const index = i + batchIndex;
-            
-            // Check elapsed time before each individual image
-            if (Date.now() - startTime > LAMBDA_SAFE_TIMEOUT) {
-              console.log(`[API] Approaching Lambda timeout limit, stopping at ${results.length}/${images.length} images`);
-              break;
+          // Save progress
+          await storage.updateScanJobResults(jobId, results, "processing");
+          
+          // Return partial results with continuation token
+          return res.json({
+            ...job,
+            results,
+            continuationToken: nextToken,
+            processing: {
+              total: images.length,
+              processed: results.length,
+              isComplete: false,
+              nextIndex: i
             }
-            
-            try {
-              console.log(`Analyzing image ${index + 1}...`);
-              const command = new CompareFacesCommand({
-                SourceImage: { Bytes: referenceImage },
-                TargetImage: { Bytes: image.buffer },
-                SimilarityThreshold: 70,
-              });
-
-              try {
-                console.log(`Sending AWS Rekognition request for image ${index + 1}`);
-                const response = await rekognition.send(command);
-                console.log(`AWS Rekognition response for image ${index + 1}:`, {
-                  hasFaceMatches: !!response.FaceMatches?.length,
-                  matchCount: response.FaceMatches?.length || 0,
-                  firstMatchSimilarity: response.FaceMatches?.[0]?.Similarity || 0
-                });
-                
-                const bestMatch = response.FaceMatches?.[0];
-                
-                results.push({
-                  imageId: index + 1,
-                  similarity: bestMatch?.Similarity || 0,
-                  matched: !!bestMatch,
-                  url: image.id
-                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
-                    : undefined,
-                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-                });
-                
-                totalProcessed++;
-              } catch (rekognitionError) {
-                console.error(`[API] AWS Rekognition error for image ${index + 1}:`, 
-                  rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
-                );
-                
-                // Include the full error details for debugging
-                if (rekognitionError instanceof Error) {
-                  console.error("[API] Error details:", {
-                    name: rekognitionError.name,
-                    message: rekognitionError.message,
-                    stack: rekognitionError.stack
-                  });
-                }
-                
-                // Check for invalid token errors specifically
-                const errorMessage = rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error';
-                const isAuthError = errorMessage.includes('token') || errorMessage.includes('credentials') || 
-                                    errorMessage.includes('auth') || errorMessage.includes('access key');
-                
-                // Add error result
-                results.push({
-                  imageId: index + 1,
-                  similarity: 0,
-                  matched: false,
-                  error: errorMessage,
-                  errorType: isAuthError ? 'auth_error' : 'processing_error',
-                  url: image.id
-                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
-                    : undefined,
-                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-                });
-                
-                totalProcessed++;
-              }
-            } catch (error) {
-              console.error(
-                `Face comparison error for image ${index + 1}:`,
-                error,
-              );
-              
-              results.push({
-                imageId: index + 1,
-                similarity: 0,
-                matched: false,
-              });
-              
-              totalProcessed++;
-            }
-            
-            // Save results after EACH image to ensure no work is lost
-            if (totalProcessed % 1 === 0) { // Save after every image
-              try {
-                await storage.updateScanJobResults(jobId, results, "processing");
-                console.log(`[API] Saved progress after ${results.length} images`);
-              } catch (saveError) {
-                console.error("Error saving intermediate results:", saveError);
-              }
-            }
-          }
+          });
         }
-      } catch (processingError) {
-        console.error("Error during batch processing:", processingError);
-        // Make sure to save what we have even if an error occurs
-        if (results.length > 0) {
+        
+        // Process the image
+        try {
+          const image = images[i];
+          console.log(`Processing image ${i + 1}/${images.length}`);
+          
+          // Create face comparison command
+          const command = new CompareFacesCommand({
+            SourceImage: { Bytes: referenceImageBuffer },
+            TargetImage: { Bytes: image.buffer },
+            SimilarityThreshold: 70,
+          });
+          
+          // Send to Rekognition
+          try {
+            const response = await rekognition.send(command);
+            const bestMatch = response.FaceMatches?.[0];
+            
+            // Add to results
+            results.push({
+              imageId: i + 1,
+              similarity: bestMatch?.Similarity || 0,
+              matched: !!bestMatch,
+              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+            });
+          } catch (rekognitionError) {
+            console.error(`[API] AWS Rekognition error for image ${i + 1}:`, 
+              rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
+            );
+            
+            // Add error result
+            results.push({
+              imageId: i + 1,
+              similarity: 0,
+              matched: false,
+              error: rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
+              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+            });
+          }
+        } catch (error) {
+          console.error(`Face comparison error for image ${i + 1}:`, error);
+          results.push({
+            imageId: i + 1,
+            similarity: 0,
+            matched: false,
+          });
+        }
+        
+        // Save progress after each image
+        if ((i - startIndex) % 2 === 1 || i === endIndex - 1) {
           await storage.updateScanJobResults(jobId, results, "processing");
         }
       }
       
       // Check if we've processed all images
-      isComplete = results.length >= images.length;
+      isComplete = endIndex >= images.length;
       
-      // Final update to job status
-      const updatedJob = await storage.updateScanJobResults(
-        jobId, 
-        results, 
-        isComplete ? "complete" : "processing"
-      );
+      // Create continuation token if not complete
+      const nextToken = !isComplete ? JSON.stringify({
+        referenceImageId: parsedToken.referenceImageId,
+        nextIndex: endIndex
+      }) : null;
       
-      // Include process status in response
-      res.json({
+      // Update final status
+      const finalStatus = isComplete ? "complete" : "processing";
+      const updatedJob = await storage.updateScanJobResults(jobId, results, finalStatus);
+      
+      // Return response with continuation token if needed
+      return res.json({
         ...updatedJob,
+        continuationToken: nextToken,
         processing: {
           total: images.length,
           processed: results.length,
-          isComplete
+          isComplete,
+          nextIndex: endIndex
         }
       });
+      
     } catch (error) {
       console.error("Analysis error:", error);
       res.status(500).json({ error: (error as Error).message });
