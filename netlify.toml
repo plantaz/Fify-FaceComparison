@@ -7,6 +7,11 @@
   NODE_VERSION = "20"
   MY_AWS_REGION = "us-east-1"
 
+[functions]
+  # Increase function timeout to 25 minutes (1500 seconds) to handle large batches
+  node_bundler = "esbuild"
+  timeout = 1500
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"

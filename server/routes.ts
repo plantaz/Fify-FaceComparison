@@ -148,84 +148,106 @@ export function registerRoutes(app: Express): void {
       const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
       await provider.scanDirectory(job.driveUrl);
       const images = await provider.getImages();
-
-      const results = await Promise.all(
-        images.map(
-          async (image: { buffer: Buffer; id?: string }, index: number) => {
-            try {
-              console.log(`Analyzing image ${index + 1}...`);
-              const command = new CompareFacesCommand({
-                SourceImage: { Bytes: referenceImage },
-                TargetImage: { Bytes: image.buffer },
-                SimilarityThreshold: 70,
-              });
-
+      
+      console.log(`[API] Total images to process: ${images.length}`);
+      
+      // Process images in batches to avoid Lambda timeout
+      const BATCH_SIZE = 20; // Process 20 images at a time
+      const results = [];
+      
+      // Process images in batches
+      for (let i = 0; i < images.length; i += BATCH_SIZE) {
+        console.log(`[API] Processing batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(images.length/BATCH_SIZE)}`);
+        const imageBatch = images.slice(i, i + BATCH_SIZE);
+        
+        const batchResults = await Promise.all(
+          imageBatch.map(
+            async (image: { buffer: Buffer; id?: string }, batchIndex: number) => {
+              const index = i + batchIndex;
               try {
-                console.log(`Sending AWS Rekognition request for image ${index + 1}`);
-                const response = await rekognition.send(command);
-                console.log(`AWS Rekognition response for image ${index + 1}:`, {
-                  hasFaceMatches: !!response.FaceMatches?.length,
-                  matchCount: response.FaceMatches?.length || 0,
-                  firstMatchSimilarity: response.FaceMatches?.[0]?.Similarity || 0
+                console.log(`Analyzing image ${index + 1}...`);
+                const command = new CompareFacesCommand({
+                  SourceImage: { Bytes: referenceImage },
+                  TargetImage: { Bytes: image.buffer },
+                  SimilarityThreshold: 70,
                 });
-                
-                const bestMatch = response.FaceMatches?.[0];
-                
-                return {
-                  imageId: index + 1,
-                  similarity: bestMatch?.Similarity || 0,
-                  matched: !!bestMatch,
-                  url: image.id
-                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
-                    : undefined,
-                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-                };
-              } catch (rekognitionError) {
-                console.error(`[API] AWS Rekognition error for image ${index + 1}:`, 
-                  rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
-                );
-                
-                // Include the full error details for debugging
-                if (rekognitionError instanceof Error) {
-                  console.error("[API] Error details:", {
-                    name: rekognitionError.name,
-                    message: rekognitionError.message,
-                    stack: rekognitionError.stack
+
+                try {
+                  console.log(`Sending AWS Rekognition request for image ${index + 1}`);
+                  const response = await rekognition.send(command);
+                  console.log(`AWS Rekognition response for image ${index + 1}:`, {
+                    hasFaceMatches: !!response.FaceMatches?.length,
+                    matchCount: response.FaceMatches?.length || 0,
+                    firstMatchSimilarity: response.FaceMatches?.[0]?.Similarity || 0
                   });
+                  
+                  const bestMatch = response.FaceMatches?.[0];
+                  
+                  return {
+                    imageId: index + 1,
+                    similarity: bestMatch?.Similarity || 0,
+                    matched: !!bestMatch,
+                    url: image.id
+                      ? `https://lh3.googleusercontent.com/d/${image.id}=s1000`
+                      : undefined,
+                    driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+                  };
+                } catch (rekognitionError) {
+                  console.error(`[API] AWS Rekognition error for image ${index + 1}:`, 
+                    rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
+                  );
+                  
+                  // Include the full error details for debugging
+                  if (rekognitionError instanceof Error) {
+                    console.error("[API] Error details:", {
+                      name: rekognitionError.name,
+                      message: rekognitionError.message,
+                      stack: rekognitionError.stack
+                    });
+                  }
+                  
+                  // Check for invalid token errors specifically
+                  const errorMessage = rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error';
+                  const isAuthError = errorMessage.includes('token') || errorMessage.includes('credentials') || 
+                                      errorMessage.includes('auth') || errorMessage.includes('access key');
+                  
+                  // Return a result with error information
+                  return {
+                    imageId: index + 1,
+                    similarity: 0,
+                    matched: false,
+                    error: errorMessage,
+                    errorType: isAuthError ? 'auth_error' : 'processing_error',
+                    url: image.id
+                      ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
+                      : undefined,
+                    driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+                  };
                 }
-                
-                // Check for invalid token errors specifically
-                const errorMessage = rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error';
-                const isAuthError = errorMessage.includes('token') || errorMessage.includes('credentials') || 
-                                    errorMessage.includes('auth') || errorMessage.includes('access key');
-                
-                // Return a result with error information
+              } catch (error) {
+                console.error(
+                  `Face comparison error for image ${index + 1}:`,
+                  error,
+                );
                 return {
                   imageId: index + 1,
                   similarity: 0,
                   matched: false,
-                  error: errorMessage,
-                  errorType: isAuthError ? 'auth_error' : 'processing_error',
-                  url: image.id
-                    ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` 
-                    : undefined,
-                  driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
                 };
               }
-            } catch (error) {
-              console.error(
-                `Face comparison error for image ${index + 1}:`,
-                error,
-              );
-              return {
-                imageId: index + 1,
-                similarity: 0,
-                matched: false,
-              };
-            }
-          },
-        ),
-      );
+            },
+          ),
+        );
+        
+        // Add batch results to overall results
+        results.push(...batchResults);
+        
+        // Store partial results in case the function times out later
+        if (results.length % (BATCH_SIZE * 2) === 0 || i + BATCH_SIZE >= images.length) {
+          console.log(`[API] Saving intermediate results after processing ${results.length} images`);
+          await storage.updateScanJobResults(jobId, results);
+        }
+      }
 
       const updatedJob = await storage.updateScanJobResults(jobId, results);
       res.json(updatedJob);
