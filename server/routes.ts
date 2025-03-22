@@ -75,12 +75,12 @@ export function registerRoutes(app: Express): void {
       const googleApiKey = req.body.googleApiKey;
       const continuationToken = req.body.continuationToken;
       
-      // Extremely simplified logging 
+      // Simplified logging 
       console.log(`[API] ${continuationToken ? "Continuation" : "New"} analysis for job: ${jobId}`);
 
-      // Lambda ultra-safe timeout (1 second to be extremely conservative)
+      // Lambda safe timeout (8 seconds is conservative but allows more processing)
       const startTime = Date.now();
-      const SAFE_TIMEOUT = 1000; // Only 1 second to be ultra conservative
+      const SAFE_TIMEOUT = 8000; // 8 seconds allows processing multiple images
 
       // Trim credential strings
       const cleanAwsAccessKeyId = awsAccessKeyId?.trim();
@@ -146,10 +146,6 @@ export function registerRoutes(app: Express): void {
           return res.status(500).json({ error: "Failed to scan Google Drive directory" });
         }
         
-        // Store the reference image for future requests
-        // In a real implementation you might want to upload this to S3
-        // For now just use a token to indicate the upload happened
-        
         // Create continuation token for the first batch
         const initialToken = JSON.stringify({
           referenceImageId: referenceImageId,
@@ -174,27 +170,7 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // For continuation requests, process a SINGLE image per Lambda invocation
-      
-      // Create Rekognition client - do this AFTER checking timeout to avoid unnecessary setup
-      if (Date.now() - startTime > SAFE_TIMEOUT * 0.5) {
-        console.log(`[API] Approaching time limit during setup`);
-        
-        // Return immediately with the same token
-        return res.json({
-          ...job,
-          results,
-          continuationToken,
-          processing: {
-            total: job.imageCount,
-            processed: results.length,
-            isComplete: false,
-            nextIndex: startIndex
-          }
-        });
-      }
-      
-      // Setup the rekognition client
+      // Create Rekognition client
       const rekognition = new RekognitionClient({
         region: process.env.MY_AWS_REGION || "us-east-1",
         credentials: {
@@ -206,24 +182,6 @@ export function registerRoutes(app: Express): void {
       // Initialize provider
       const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
       
-      // Check if we're approaching timeout
-      if (Date.now() - startTime > SAFE_TIMEOUT * 0.7) {
-        console.log(`[API] Approaching time limit before fetching images`);
-        
-        // Return with the same continuation token
-        return res.json({
-          ...job,
-          results,
-          continuationToken,
-          processing: {
-            total: job.imageCount,
-            processed: results.length,
-            isComplete: false,
-            nextIndex: startIndex
-          }
-        });
-      }
-      
       // Prepare the reference image
       let referenceImageBuffer: Buffer | null = null;
       
@@ -233,7 +191,6 @@ export function registerRoutes(app: Express): void {
           referenceImageBuffer = req.file.buffer;
         } else {
           // Special case: we lost the reference but have the jobId
-          // Implement a recovery mechanism here
           return res.status(400).json({ 
             error: "Reference image missing. Please restart the process." 
           });
@@ -241,40 +198,8 @@ export function registerRoutes(app: Express): void {
       }
       
       // Check if we've used too much time already
-      if (Date.now() - startTime > SAFE_TIMEOUT * 0.8) {
-        console.log(`[API] Approaching time limit during reference image setup`);
-        return res.json({
-          ...job,
-          results,
-          continuationToken,
-          processing: {
-            total: job.imageCount,
-            processed: results.length,
-            isComplete: false,
-            nextIndex: startIndex
-          }
-        });
-      }
-      
-      // Get an extremely small batch of images - just ONE image
-      // Skip rescan and go directly to getImages which should be cached
-      const imageToProcess = await provider.getSingleImage(startIndex);
-      if (!imageToProcess) {
-        return res.json({
-          ...job,
-          results,
-          processing: {
-            total: job.imageCount,
-            processed: results.length,
-            isComplete: true, // Mark as complete if we've processed all images
-            nextIndex: startIndex
-          }
-        });
-      }
-
-      // Check if we're approaching timeout again
-      if (Date.now() - startTime > SAFE_TIMEOUT * 0.9) {
-        console.log(`[API] Approaching time limit after image fetch`);
+      if (Date.now() - startTime > SAFE_TIMEOUT * 0.2) {
+        console.log(`[API] Approaching time limit during setup`);
         return res.json({
           ...job,
           results,
@@ -295,70 +220,119 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      try {
-        // Process just this single image
-        console.log(`Processing image ${startIndex + 1}/${job.imageCount}`);
-        
-        // Create face comparison command
-        const command = new CompareFacesCommand({
-          SourceImage: { Bytes: referenceImageBuffer },
-          TargetImage: { Bytes: imageToProcess.buffer },
-          SimilarityThreshold: 70,
+      // Process 4 images per batch for faster processing
+      const BATCH_SIZE = 4;
+      const endIndex = Math.min(startIndex + BATCH_SIZE, job.imageCount);
+      
+      // Fetch multiple images in parallel for better performance
+      console.log(`Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
+      const imagesBatch = await provider.getImageBatch(startIndex, BATCH_SIZE);
+      
+      // If we couldn't fetch any images, check if we've reached the end
+      if (imagesBatch.length === 0) {
+        return res.json({
+          ...job,
+          results,
+          processing: {
+            total: job.imageCount,
+            processed: results.length,
+            isComplete: true, // Mark as complete if we've processed all images
+            nextIndex: startIndex
+          }
         });
-        
-        // Send to Rekognition
-        try {
-          const response = await rekognition.send(command);
-          const bestMatch = response.FaceMatches?.[0];
-          
-          // Add to results
-          results.push({
-            imageId: startIndex + 1,
-            similarity: bestMatch?.Similarity || 0,
-            matched: !!bestMatch,
-            url: imageToProcess.id ? `https://lh3.googleusercontent.com/d/${imageToProcess.id}=s1000` : undefined,
-            driveUrl: `https://drive.google.com/file/d/${imageToProcess.id}/view`,
-          });
-          
-          // Save results immediately
-          await storage.updateScanJobResults(jobId, results, "processing");
-          
-        } catch (rekognitionError) {
-          console.error(`[API] AWS Rekognition error:`, 
-            rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
-          );
-          
-          // Add error result
-          results.push({
-            imageId: startIndex + 1,
-            similarity: 0,
-            matched: false,
-            error: rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
-            url: imageToProcess.id ? `https://lh3.googleusercontent.com/d/${imageToProcess.id}=s1000` : undefined,
-            driveUrl: `https://drive.google.com/file/d/${imageToProcess.id}/view`,
-          });
-          
-          // Still save the error result
-          await storage.updateScanJobResults(jobId, results, "processing");
-        }
-      } catch (error) {
-        console.error(`Face comparison error:`, error);
-        results.push({
-          imageId: startIndex + 1,
-          similarity: 0,
-          matched: false,
-        });
-        
-        // Save progress even after errors
-        await storage.updateScanJobResults(jobId, results, "processing");
       }
       
-      // Create continuation token for next image
-      const nextIndex = startIndex + 1;
-      const isComplete = nextIndex >= job.imageCount;
+      // Process each image in the batch
+      for (const image of imagesBatch) {
+        // Check if we're approaching timeout
+        if (Date.now() - startTime > SAFE_TIMEOUT * 0.8) {
+          console.log(`[API] Approaching time limit during processing, stopping before index ${image.index}`);
+          // Save results and return with continuation token for remaining images
+          await storage.updateScanJobResults(jobId, results, "processing");
+          
+          const nextToken = JSON.stringify({
+            referenceImageId: referenceImageId,
+            nextIndex: image.index,
+            jobId
+          });
+          
+          return res.json({
+            ...job,
+            results,
+            continuationToken: nextToken,
+            processing: {
+              total: job.imageCount,
+              processed: results.length,
+              isComplete: false,
+              nextIndex: image.index
+            }
+          });
+        }
+        
+        try {
+          const imageIndex = image.index;
+          console.log(`Processing image ${imageIndex + 1}/${job.imageCount}`);
+          
+          // Create face comparison command
+          const command = new CompareFacesCommand({
+            SourceImage: { Bytes: referenceImageBuffer },
+            TargetImage: { Bytes: image.buffer },
+            SimilarityThreshold: 70,
+          });
+          
+          // Send to Rekognition
+          try {
+            const response = await rekognition.send(command);
+            const bestMatch = response.FaceMatches?.[0];
+            
+            // Add to results
+            results.push({
+              imageId: imageIndex + 1,
+              similarity: bestMatch?.Similarity || 0,
+              matched: !!bestMatch,
+              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+            });
+            
+          } catch (rekognitionError) {
+            console.error(`[API] AWS Rekognition error for image ${imageIndex + 1}:`, 
+              rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
+            );
+            
+            // Add error result
+            results.push({
+              imageId: imageIndex + 1,
+              similarity: 0,
+              matched: false,
+              error: rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
+              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+            });
+          }
+          
+        } catch (error) {
+          const imageIndex = image.index;
+          console.error(`Face comparison error for image ${imageIndex + 1}:`, error);
+          results.push({
+            imageId: imageIndex + 1,
+            similarity: 0,
+            matched: false,
+          });
+        }
+      }
+      
+      // Save all results at once after processing the batch
+      await storage.updateScanJobResults(jobId, results, "processing");
+      
+      // Calculate the next index based on what we actually processed
+      const lastProcessedIndex = imagesBatch.length > 0 
+        ? Math.max(...imagesBatch.map(img => img.index)) + 1 
+        : startIndex;
+      
+      const isComplete = lastProcessedIndex >= job.imageCount;
       const nextToken = !isComplete ? JSON.stringify({
         referenceImageId: referenceImageId,
-        nextIndex: nextIndex,
+        nextIndex: lastProcessedIndex,
         jobId
       }) : null;
       
@@ -374,7 +348,7 @@ export function registerRoutes(app: Express): void {
           total: job.imageCount,
           processed: results.length,
           isComplete,
-          nextIndex: nextIndex
+          nextIndex: lastProcessedIndex
         }
       });
       

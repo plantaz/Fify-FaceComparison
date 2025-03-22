@@ -2,12 +2,14 @@ export interface CloudImage {
   id?: string;
   name?: string;
   buffer: Buffer;
+  index?: number; // Index in the original file list
 }
 
 export interface CloudStorageProvider {
   scanDirectory: (url: string) => Promise<number>;
   getImages: () => Promise<CloudImage[]>;
   getSingleImage: (index: number) => Promise<CloudImage | null>;
+  getImageBatch: (startIndex: number, count: number) => Promise<CloudImage[]>;
 }
 
 export function createStorageProvider(
@@ -117,11 +119,11 @@ class GoogleStorageProvider implements CloudStorageProvider {
       const batchResults = await Promise.all(
         batch.map(async (file) => {
           try {
-            // Smaller s200 size for analysis is plenty (faces don't need high resolution)
+            // Smaller s1000 size for analysis is plenty (faces don't need high resolution)
             // This significantly reduces download size and time
-            const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s200`;
+            const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s1000`;
             
-            console.log(`Downloading image (s200 size) for file: ${file.name || file.id}`);
+            console.log(`Downloading image (s1000 size) for file: ${file.name || file.id}`);
             const response = await fetch(imageUrl);
             
             if (!response.ok) {
@@ -173,11 +175,11 @@ class GoogleStorageProvider implements CloudStorageProvider {
       }
       
       const file = this.listFiles[index];
-      console.log(`Downloading single image (s200 size) for file: ${file.name || file.id}`);
+      console.log(`Downloading single image (s1000 size) for file: ${file.name || file.id}`);
       
       try {
-        // Smaller s200 size for analysis is plenty (faces don't need high resolution)
-        const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s200`;
+        // Use s1000 size which works better for face recognition while still being optimized
+        const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s1000`;
         
         const response = await fetch(imageUrl);
         if (!response.ok) {
@@ -198,6 +200,60 @@ class GoogleStorageProvider implements CloudStorageProvider {
     } catch (error) {
       console.error("Error getting single image:", error);
       return null;
+    }
+  }
+  
+  // New method: get multiple images in parallel for faster processing
+  async getImageBatch(startIndex: number, count: number): Promise<CloudImage[]> {
+    try {
+      // Make sure we have files
+      if (!this.listFiles || this.listFiles.length === 0) {
+        // Reinitialize if files list is not available
+        await this.scanDirectory(this.url);
+      }
+      
+      // Validate indexes
+      const endIndex = Math.min(startIndex + count, this.listFiles.length);
+      if (startIndex >= this.listFiles.length || startIndex < 0) {
+        console.log(`Start index ${startIndex} is out of bounds`);
+        return [];
+      }
+      
+      // Get the batch of files to process
+      const filesToProcess = this.listFiles.slice(startIndex, endIndex);
+      console.log(`Downloading batch of ${filesToProcess.length} images (s1000 size)`);
+      
+      // Process all files in parallel for speed
+      const results = await Promise.all(
+        filesToProcess.map(async (file, index) => {
+          try {
+            const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s1000`;
+            const response = await fetch(imageUrl);
+            
+            if (!response.ok) {
+              console.error(`Failed to fetch image for ${file.name || file.id}: ${response.statusText}`);
+              return null;
+            }
+            
+            const buffer = Buffer.from(await response.arrayBuffer());
+            return { 
+              id: file.id, 
+              name: file.name,
+              buffer,
+              index: startIndex + index // Include the original index for reference
+            };
+          } catch (error) {
+            console.error(`Error downloading file ${file.name || file.id}:`, error);
+            return null;
+          }
+        })
+      );
+      
+      // Filter out any failures
+      return results.filter(Boolean) as CloudImage[];
+    } catch (error) {
+      console.error("Error getting image batch:", error);
+      return [];
     }
   }
 }
