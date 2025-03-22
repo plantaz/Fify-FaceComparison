@@ -6,14 +6,15 @@ export type Language = z.infer<typeof Language>;
 export const translations = {
   "en": {
     // Hero section
-    "hero.title": "Search in public directory of multiple images for specific faces using AI Recognition!",
-    "hero.subtitle": "First, provide a link from Google Drive.",
+    "hero.title": "Search in public directory of multiple images for desired faces using AI Recognition!",
+    "hero.subtitle": "",
     
     // Forms and inputs
-    "url.placeholder": "Paste your Google Drive URL",
+    "url.label": "Google Drive URL",
+    "url.placeholder": "Enter a public Google Drive URL",
     "url.validation": "URL must be from Google Drive",
     "googleApiKey.label": "Google API Key",
-    "googleApiKey.placeholder": "Enter your Google API Key",
+    "googleApiKey.placeholder": "Enter a Google API Key",
     "googleApiKey.required": "Google API Key is required",
     "awsAccessKey.label": "AWS Access Key ID",
     "awsAccessKey.placeholder": "Enter AWS Access Key ID",
@@ -32,7 +33,7 @@ export const translations = {
     // Messages
     "noImages.title": "No Images Found",
     "noImages.description": "The provided directory doesn't contain any compatible images.",
-    "error.credentials": "Cloud storage access is not properly configured. Please check your credentials.",
+    "error.credentials": "Cloud storage access is not properly configured. Please check the credentials.",
     "error.generic": "An error occurred. Please try again.",
     "foundImages": "Found {count} Images",
     "uploadInstructions": "Upload a clear front-facing photo showing the entire face. Best results come from well-lit photos without sunglasses or masks.",
@@ -53,25 +54,26 @@ export const translations = {
   },
   "pt-BR": {
     // Hero section
-    "hero.title": "Pesquise em diretório público de múltiplas imagens por rostos específicos usando Reconhecimento por IA!",
-    "hero.subtitle": "Primeiro, forneça um link do Google Drive.",
+    "hero.title": "Pesquise em diretório público de múltiplas imagens por faces desejadas usando reconhecimento por IA!",
+    "hero.subtitle": "",
     
     // Forms and inputs
-    "url.placeholder": "Cole a URL do Google Drive",
+    "url.label": "URL do Google Drive",
+    "url.placeholder": "Adicione uma URL pública do Google Drive",
     "url.validation": "A URL deve ser do Google Drive",
     "googleApiKey.label": "Chave da API do Google",
-    "googleApiKey.placeholder": "Digite sua chave da API do Google",
+    "googleApiKey.placeholder": "Adicione uma chave da API do Google",
     "googleApiKey.required": "A chave da API do Google é obrigatória",
     "awsAccessKey.label": "ID da Chave de Acesso AWS",
-    "awsAccessKey.placeholder": "Digite o ID da Chave de Acesso AWS",
+    "awsAccessKey.placeholder": "Adicione o ID da Chave de Acesso AWS",
     "awsAccessKey.required": "O ID da Chave de Acesso AWS é obrigatório",
     "awsSecretKey.label": "Chave de Acesso Secreta AWS",
-    "awsSecretKey.placeholder": "Digite a Chave de Acesso Secreta AWS",
+    "awsSecretKey.placeholder": "Adicione a Chave de Acesso Secreta AWS",
     "awsSecretKey.required": "A Chave de Acesso Secreta AWS é obrigatória",
 
     // Buttons
-    "scan.button": "Iniciar Digitalização",
-    "scan.loading": "Digitalizando...",
+    "scan.button": "Iniciar mapeamento",
+    "scan.loading": "Mapeando...",
     "analyze.button": "Analisar Rostos",
     "analyze.loading": "Analisando...",
     "submit": "Enviar",

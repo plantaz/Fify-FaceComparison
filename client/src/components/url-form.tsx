@@ -85,7 +85,13 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit((data) => scanMutation.mutate(data))} className="space-y-4 max-w-md mx-auto">
+        <div className="flex items-center justify-between mb-2">
+          <label htmlFor="drive-url" className="text-sm font-medium flex items-center gap-2">
+            {getTranslation("url.label", language)}
+          </label>
+        </div>
         <Input
+          id="drive-url"
           placeholder={getTranslation("url.placeholder", language)}
           {...form.register("url")}
           className="w-full"
