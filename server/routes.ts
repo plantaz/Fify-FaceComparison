@@ -118,6 +118,31 @@ export function registerRoutes(app: Express): void {
           const existingJob = await storage.getScanJob(jobId);
           if (existingJob?.results && Array.isArray(existingJob.results)) {
             results = existingJob.results;
+            
+            // Log the current results length to debug duplication issue
+            console.log(`[API] Existing results count: ${results.length}`);
+            
+            // Check for duplicate results by comparing imageId
+            const uniqueImageIds = new Set();
+            const uniqueResults = [];
+            
+            for (const result of results) {
+              if (!uniqueImageIds.has(result.imageId)) {
+                uniqueImageIds.add(result.imageId);
+                uniqueResults.push(result);
+              } else {
+                console.log(`[API] Found duplicate result for imageId: ${result.imageId}`);
+              }
+            }
+            
+            if (results.length !== uniqueResults.length) {
+              console.log(`[API] Removed ${results.length - uniqueResults.length} duplicate results. New count: ${uniqueResults.length}`);
+              // Use the deduplicated results
+              results = uniqueResults;
+              
+              // Update the storage with deduplicated results
+              await storage.updateScanJobResults(jobId, uniqueResults, existingJob.status);
+            }
           }
         } else {
           // First request needs face image
@@ -140,7 +165,13 @@ export function registerRoutes(app: Express): void {
         const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
         
         try {
-          await provider.scanDirectory(job.driveUrl);
+          const imageCount = await provider.scanDirectory(job.driveUrl);
+          console.log(`[API] Found ${imageCount} images in the directory`);
+          
+          // Update the job record with the correct image count
+          await storage.updateJobImageCount(jobId, imageCount);
+          
+          job.imageCount = imageCount; // Update local reference too
         } catch (scanError) {
           console.error("Error scanning directory:", scanError);
           return res.status(500).json({ error: "Failed to scan Google Drive directory" });
@@ -222,7 +253,6 @@ export function registerRoutes(app: Express): void {
       
       // Process 4 images per batch for faster processing
       const BATCH_SIZE = 4;
-      const endIndex = Math.min(startIndex + BATCH_SIZE, job.imageCount);
       
       // Fetch multiple images in parallel for better performance
       console.log(`Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
@@ -230,6 +260,23 @@ export function registerRoutes(app: Express): void {
       
       // If we couldn't fetch any images, check if we've reached the end
       if (imagesBatch.length === 0) {
+        // Final deduplicate before marking as complete
+        const finalUniqueImageIds = new Set();
+        const finalUniqueResults = [];
+        
+        for (const result of results) {
+          if (!finalUniqueImageIds.has(result.imageId)) {
+            finalUniqueImageIds.add(result.imageId);
+            finalUniqueResults.push(result);
+          }
+        }
+        
+        if (results.length !== finalUniqueResults.length) {
+          console.log(`[API] Final deduplication - removed ${results.length - finalUniqueResults.length} duplicates`);
+          results = finalUniqueResults;
+          await storage.updateScanJobResults(jobId, finalUniqueResults, "complete");
+        }
+        
         return res.json({
           ...job,
           results,
@@ -243,10 +290,25 @@ export function registerRoutes(app: Express): void {
       }
       
       // Process each image in the batch
+      const newResults = []; // Track new results separately to avoid duplication
+      
       for (const image of imagesBatch) {
         // Check if we're approaching timeout
         if (Date.now() - startTime > SAFE_TIMEOUT * 0.8) {
           console.log(`[API] Approaching time limit during processing, stopping before index ${image.index}`);
+          
+          // Add new results to the existing results array, avoiding duplicates
+          for (const newResult of newResults) {
+            // Check if this result already exists by imageId
+            const existingIndex = results.findIndex(r => r.imageId === newResult.imageId);
+            if (existingIndex === -1) {
+              results.push(newResult);
+            } else {
+              // Replace existing result if needed
+              results[existingIndex] = newResult;
+            }
+          }
+          
           // Save results and return with continuation token for remaining images
           await storage.updateScanJobResults(jobId, results, "processing");
           
@@ -269,8 +331,15 @@ export function registerRoutes(app: Express): void {
           });
         }
         
+        // Check if we've already processed this image (avoid duplicates)
+        const alreadyProcessedIndex = results.findIndex(r => r.imageId === (image.index as number) + 1);
+        if (alreadyProcessedIndex !== -1) {
+          console.log(`[API] Skipping already processed image ${(image.index as number) + 1}`);
+          continue;
+        }
+        
         try {
-          const imageIndex = image.index;
+          const imageIndex = image.index as number;
           console.log(`Processing image ${imageIndex + 1}/${job.imageCount}`);
           
           // Create face comparison command
@@ -285,8 +354,8 @@ export function registerRoutes(app: Express): void {
             const response = await rekognition.send(command);
             const bestMatch = response.FaceMatches?.[0];
             
-            // Add to results
-            results.push({
+            // Add to new results array
+            newResults.push({
               imageId: imageIndex + 1,
               similarity: bestMatch?.Similarity || 0,
               matched: !!bestMatch,
@@ -299,8 +368,8 @@ export function registerRoutes(app: Express): void {
               rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
             );
             
-            // Add error result
-            results.push({
+            // Add error result to new results array
+            newResults.push({
               imageId: imageIndex + 1,
               similarity: 0,
               matched: false,
@@ -311,13 +380,27 @@ export function registerRoutes(app: Express): void {
           }
           
         } catch (error) {
-          const imageIndex = image.index;
+          const imageIndex = image.index as number;
           console.error(`Face comparison error for image ${imageIndex + 1}:`, error);
-          results.push({
+          
+          // Add error result to new results array
+          newResults.push({
             imageId: imageIndex + 1,
             similarity: 0,
             matched: false,
           });
+        }
+      }
+      
+      // Merge new results with existing results, ensuring no duplicates
+      for (const newResult of newResults) {
+        // Check if this result already exists by imageId
+        const existingIndex = results.findIndex(r => r.imageId === newResult.imageId);
+        if (existingIndex === -1) {
+          results.push(newResult);
+        } else {
+          // Replace existing result with new one
+          results[existingIndex] = newResult;
         }
       }
       
@@ -326,7 +409,7 @@ export function registerRoutes(app: Express): void {
       
       // Calculate the next index based on what we actually processed
       const lastProcessedIndex = imagesBatch.length > 0 
-        ? Math.max(...imagesBatch.map(img => img.index)) + 1 
+        ? Math.max(...imagesBatch.map(img => (img.index as number))) + 1 
         : startIndex;
       
       const isComplete = lastProcessedIndex >= job.imageCount;
