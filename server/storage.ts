@@ -1,4 +1,4 @@
-import { scanJobs, type ScanJob, type InsertScanJob } from "@shared/schema";
+import { type ScanJob, type InsertScanJob } from "@shared/schema";
 
 export interface IStorage {
   createScanJob(job: InsertScanJob): Promise<ScanJob>;

@@ -1,25 +1,17 @@
-import { pgTable, text, serial, integer, boolean, jsonb } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const scanJobs = pgTable("scan_jobs", {
-  id: serial("id").primaryKey(),
-  driveUrl: text("drive_url").notNull(),
-  driveType: text("drive_type").notNull(), // 'gdrive'
-  imageCount: integer("image_count").notNull(),
-  status: text("status").notNull(), // 'pending' | 'scanning' | 'complete' | 'error'
-  results: jsonb("results"),
-  createdAt: text("created_at").notNull()
-});
+// Define the ScanJob type
+export type ScanJob = {
+  id: number;
+  driveUrl: string;
+  driveType: string; // 'gdrive'
+  imageCount: number;
+  status: string; // 'pending' | 'scanning' | 'complete' | 'error'
+  results: any[] | null;
+  createdAt: string;
+};
 
-export const insertScanJobSchema = createInsertSchema(scanJobs).pick({
-  driveUrl: true,
-  driveType: true,
-  imageCount: true,
-  status: true,
-  createdAt: true
-});
-
+// URL validation schema
 export const driveUrlSchema = z.object({
   url: z.string().url()
     .refine(url => url.includes('drive.google'), {
@@ -27,6 +19,14 @@ export const driveUrlSchema = z.object({
     })
 });
 
-export type InsertScanJob = z.infer<typeof insertScanJobSchema>;
-export type ScanJob = typeof scanJobs.$inferSelect;
+// Schema for creating new jobs
+export const insertScanJobSchema = z.object({
+  driveUrl: z.string(),
+  driveType: z.string(),
+  imageCount: z.number(),
+  status: z.string(),
+  createdAt: z.string()
+});
+
 export type DriveUrlInput = z.infer<typeof driveUrlSchema>;
+export type InsertScanJob = z.infer<typeof insertScanJobSchema>;
