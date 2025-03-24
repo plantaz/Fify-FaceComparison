@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { AlertCircle, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { getTranslation } from "@shared/translations";
 import * as z from "zod";
@@ -26,11 +26,29 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
   const { toast } = useToast();
   const [showApiKey, setShowApiKey] = useState(false);
   const { language } = useLanguage();
+  const [hasEnvGoogleApiKey, setHasEnvGoogleApiKey] = useState(false);
+
+  // Check for environment variables on mount
+  useEffect(() => {
+    fetch('/api/env-check')
+      .then(res => res.json())
+      .then(data => {
+        if (data.googleApiKey) {
+          console.log("Google API Key found in environment variables, hiding input field");
+          setHasEnvGoogleApiKey(true);
+        }
+      })
+      .catch(err => {
+        console.error("Error checking environment variables:", err);
+      });
+  }, []);
 
   const form = useForm<FormData>({
     resolver: zodResolver(
       driveUrlSchema.extend({
-        googleApiKey: z.string().min(1, getTranslation("googleApiKey.required", language))
+        googleApiKey: hasEnvGoogleApiKey 
+          ? z.string().optional() 
+          : z.string().min(1, getTranslation("googleApiKey.required", language))
       })
     ),
     defaultValues: {
@@ -42,7 +60,6 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
   const scanMutation = useMutation({
     mutationFn: async (data: FormData) => {
       console.log("Submitting scan with URL:", data.url);
-      console.log("API key length:", data.googleApiKey ? data.googleApiKey.length : 0);
       
       const res = await fetch("/api/scan", {
         method: "POST",
@@ -51,7 +68,7 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
         },
         body: JSON.stringify({
           url: data.url,
-          googleApiKey: data.googleApiKey
+          googleApiKey: data.googleApiKey // Include it if provided by user
         }),
       });
       
@@ -71,7 +88,14 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
         });
         return;
       }
-      onScanComplete(data, variables.googleApiKey);
+      
+      // Check if environment variables are set in the backend
+      if (data.hasEnvGoogleApiKey) {
+        setHasEnvGoogleApiKey(true);
+      }
+      
+      // Pass the API key (either from form or env var)
+      onScanComplete(data, variables.googleApiKey || "ENV_VAR_SET");
     },
     onError: (error: Error) => {
       toast({
@@ -105,43 +129,45 @@ export default function UrlForm({ onScanComplete }: UrlFormProps) {
           </Alert>
         )}
 
-        <div className="relative">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium flex items-center gap-2">
-              {getTranslation("googleApiKey.label", language)}
-              <a
-                href={DOCUMENTATION_LINKS.googleApiKey}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:text-blue-600"
-                aria-label="Google API key documentation"
-              >
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            </label>
-          </div>
+        {!hasEnvGoogleApiKey && (
           <div className="relative">
-            <Input
-              type={showApiKey ? "text" : "password"}
-              placeholder={getTranslation("googleApiKey.placeholder", language)}
-              {...form.register("googleApiKey")}
-              className="w-full"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              className="absolute right-2 top-1/2 -translate-y-1/2"
-              onClick={() => setShowApiKey(!showApiKey)}
-              aria-label={showApiKey ? "Hide API key" : "Show API key"}
-            >
-              {showApiKey ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-            </Button>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                {getTranslation("googleApiKey.label", language)}
+                <a
+                  href={DOCUMENTATION_LINKS.googleApiKey}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-600"
+                  aria-label="Google API key documentation"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </label>
+            </div>
+            <div className="relative">
+              <Input
+                type={showApiKey ? "text" : "password"}
+                placeholder={getTranslation("googleApiKey.placeholder", language)}
+                {...form.register("googleApiKey")}
+                className="w-full"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                className="absolute right-2 top-1/2 -translate-y-1/2"
+                onClick={() => setShowApiKey(!showApiKey)}
+                aria-label={showApiKey ? "Hide API key" : "Show API key"}
+              >
+                {showApiKey ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
 
         <Button
           type="submit"

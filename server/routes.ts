@@ -25,6 +25,7 @@ export function registerRoutes(app: Express): void {
         hasGoogleApiKey: !!req.body.googleApiKey
       });
       
+      // Parse the URL but make GoogleApiKey optional
       const { url, googleApiKey } = driveUrlSchema
         .extend({
           googleApiKey: z.string().optional(),
@@ -33,11 +34,17 @@ export function registerRoutes(app: Express): void {
 
       const driveType = "gdrive";
 
-      const apiKey = googleApiKey || process.env.GOOGLE_DRIVE_API_KEY;
-      console.log("Using API key:", apiKey ? "Present (not shown for security)" : "Missing");
+      // Check if environment variables are set
+      const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
+      const hasEnvAwsAccessKeyId = !!process.env.AWS_ACCESS_KEY_ID;
+      const hasEnvAwsSecretAccessKey = !!process.env.AWS_SECRET_ACCESS_KEY;
+      
+      // Use environment variables if available, otherwise use the provided values
+      const apiKey = hasEnvGoogleApiKey ? process.env.GOOGLE_DRIVE_API_KEY : googleApiKey;
+      console.log("Using API key from:", hasEnvGoogleApiKey ? "environment variable" : "request body");
 
       if (!apiKey) {
-        throw new Error("Google Drive API key not configured");
+        throw new Error("Google Drive API key not configured. Please add it to environment variables or provide it in the request.");
       }
 
       const provider = createStorageProvider(url, apiKey);
@@ -51,16 +58,17 @@ export function registerRoutes(app: Express): void {
           createdAt: new Date().toISOString(),
         });
 
-        res.json(job);
-      } catch (error) {
-        console.error("Drive scanning error:", error);
-        res.status(500).json({
-          error: "Failed to scan drive directory",
-          details: (error as Error).message,
+        return res.json({
+          ...job,
+          hasEnvGoogleApiKey,
+          hasEnvAwsCredentials: hasEnvAwsAccessKeyId && hasEnvAwsSecretAccessKey
         });
+      } catch (error) {
+        console.error("Error scanning directory:", error);
+        throw error;
       }
     } catch (error) {
-      console.error("Validation error:", error);
+      console.error("Error processing scan request:", error);
       res.status(400).json({ error: (error as Error).message });
     }
   });
@@ -78,14 +86,25 @@ export function registerRoutes(app: Express): void {
       // Simplified logging 
       console.log(`[API] ${continuationToken ? "Continuation" : "New"} analysis for job: ${jobId}`);
 
-      // Lambda safe timeout (8 seconds is conservative but allows more processing)
+      // Lambda safe timeout (4 seconds is very conservative to prevent issues)
       const startTime = Date.now();
-      const SAFE_TIMEOUT = 8000; // 8 seconds allows processing multiple images
+      const SAFE_TIMEOUT = 4000; // 4 seconds for a smaller batch size
+
+      // Check if environment variables are set
+      const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
+      const hasEnvAwsAccessKeyId = !!process.env.AWS_ACCESS_KEY_ID;
+      const hasEnvAwsSecretAccessKey = !!process.env.AWS_SECRET_ACCESS_KEY;
 
       // Trim credential strings
-      const cleanAwsAccessKeyId = awsAccessKeyId?.trim();
-      const cleanAwsSecretAccessKey = awsSecretAccessKey?.trim();
-      const cleanGoogleApiKey = googleApiKey?.trim();
+      const cleanAwsAccessKeyId = hasEnvAwsAccessKeyId 
+        ? process.env.AWS_ACCESS_KEY_ID 
+        : awsAccessKeyId?.trim();
+      const cleanAwsSecretAccessKey = hasEnvAwsSecretAccessKey 
+        ? process.env.AWS_SECRET_ACCESS_KEY 
+        : awsSecretAccessKey?.trim();
+      const cleanGoogleApiKey = hasEnvGoogleApiKey 
+        ? process.env.GOOGLE_DRIVE_API_KEY 
+        : googleApiKey?.trim();
       
       // Check required credentials immediately
       if (!cleanGoogleApiKey) {
@@ -251,8 +270,8 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Process 4 images per batch for faster processing
-      const BATCH_SIZE = 4;
+      // Process 2 images per batch for faster processing with less risk of timeout
+      const BATCH_SIZE = 2;
       
       // Fetch multiple images in parallel for better performance
       console.log(`Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
@@ -441,7 +460,7 @@ export function registerRoutes(app: Express): void {
     }
   });
 
-  // Add a new endpoint to check job status
+  // Add endpoint to get job details with environment variable information
   app.get("/api/jobs/:jobId", async (req, res) => {
     try {
       const jobId = parseInt(req.params.jobId);
@@ -451,11 +470,33 @@ export function registerRoutes(app: Express): void {
         return res.status(404).json({ error: "Job not found" });
       }
       
-      res.json(job);
+      // Check if environment variables are set
+      const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
+      const hasEnvAwsAccessKeyId = !!process.env.AWS_ACCESS_KEY_ID;
+      const hasEnvAwsSecretAccessKey = !!process.env.AWS_SECRET_ACCESS_KEY;
+      
+      return res.json({
+        ...job,
+        hasEnvGoogleApiKey,
+        hasEnvAwsCredentials: hasEnvAwsAccessKeyId && hasEnvAwsSecretAccessKey
+      });
     } catch (error) {
-      console.error("Error fetching job status:", error);
+      console.error("Error getting job:", error);
       res.status(500).json({ error: (error as Error).message });
     }
+  });
+
+  // Add an environment check endpoint
+  app.get("/api/env-check", (req, res) => {
+    const envStatus = {
+      googleApiKey: !!process.env.GOOGLE_DRIVE_API_KEY,
+      awsAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID, 
+      awsSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+      myAwsRegion: process.env.MY_AWS_REGION || "us-east-1"
+    };
+    
+    console.log("Environment check requested:", envStatus);
+    return res.json(envStatus);
   });
 
   // Return empty for serverless compatibility

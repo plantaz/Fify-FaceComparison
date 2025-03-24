@@ -11,7 +11,7 @@ A SaaS platform that helps users find specific faces in their cloud storage dire
 ## Development Setup
 
 1. Clone the repository
-2. Create a `.env` file based on `.env.example`:
+2. Create a `.env` file based on the provided `.env.example`:
 ```env
 NODE_ENV=development
 
@@ -19,10 +19,9 @@ NODE_ENV=development
 GOOGLE_DRIVE_API_KEY=your_google_drive_api_key
 AWS_ACCESS_KEY_ID=your_aws_access_key_id
 AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
-
-# Database
-DATABASE_URL=your_database_url
 ```
+
+> ⚠️ **Important Security Warning**: Never commit your `.env` file containing real API keys or credentials to Git. The `.env` file is included in `.gitignore` and should remain that way. Only commit the `.env.example` template.
 
 3. Install dependencies:
 ```bash
@@ -48,7 +47,6 @@ This application can be deployed to Netlify as a fullstack application using Net
    - Node version: 20.x (or later)
 
 4. Set up the required environment variables in Netlify:
-   - `DATABASE_URL`: Your database connection string (e.g. Neon, Supabase)
    - `NODE_ENV`: Set to `development` (we're using development mode for simplicity)
 
 5. Make sure you have the `netlify.toml` file in your repository root with the following content:

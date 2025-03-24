@@ -13,8 +13,7 @@
     "build:functions": "esbuild netlify/functions/api.js --platform=node --packages=external --bundle --format=cjs --outfile=netlify/functions/api.cjs && mv netlify/functions/api.cjs netlify/functions/api.js",
     "build:server": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "node dist/index.js",
-    "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "check": "tsc"
   },
   "dependencies": {
     "@aws-sdk/client-rekognition": "^3.744.0",
@@ -58,8 +57,7 @@
     "connect-pg-simple": "^10.0.0",
     "cross-env": "^7.0.3",
     "date-fns": "^3.6.0",
-    "drizzle-orm": "^0.39.3",
-    "drizzle-zod": "^0.7.0",
+    "dotenv": "^16.4.7",
     "embla-carousel-react": "^8.3.0",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
@@ -103,7 +101,6 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "drizzle-kit": "^0.30.4",
     "esbuild": "^0.24.2",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",

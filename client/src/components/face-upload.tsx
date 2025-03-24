@@ -9,6 +9,7 @@ import { type ScanJob } from "@shared/schema";
 import { useLanguage } from "@/lib/language-context";
 import { getTranslation } from "@shared/translations";
 import { AwsCredentialsForm } from "./aws-credentials-form";
+import { cn } from "@/lib/utils";
 
 interface FaceUploadProps {
   jobId: number;
@@ -39,6 +40,34 @@ export default function FaceUpload({
   const [isContinuing, setIsContinuing] = useState(false);
   const lastPollTimeRef = useRef<number>(0);
   const minPollIntervalMs = 5000; // Minimum 5 seconds between polls
+  const [hasEnvAwsCredentials, setHasEnvAwsCredentials] = useState(false);
+
+  // Check if AWS credentials are set in env vars
+  useEffect(() => {
+    // If the job was provided from the URL form, check if it has hasEnvAwsCredentials flag
+    if (setScanJob && typeof setScanJob === 'function') {
+      const checkJobForEnvVars = async () => {
+        try {
+          const res = await fetch(`/api/jobs/${jobId}`);
+          if (res.ok) {
+            const job = await res.json();
+            if (job.hasEnvAwsCredentials) {
+              setHasEnvAwsCredentials(true);
+              // Auto-start analysis with env credentials
+              setAwsCredentials({
+                awsAccessKeyId: "ENV_VAR_SET",
+                awsSecretAccessKey: "ENV_VAR_SET"
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Error checking job status:", error);
+        }
+      };
+      
+      checkJobForEnvVars();
+    }
+  }, [jobId, setScanJob]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFile(acceptedFiles[0]);
@@ -74,23 +103,19 @@ export default function FaceUpload({
         formData.append("face", file);
       }
 
-      // Always require AWS credentials
-      if (awsCredentials) {
+      // Always append AWS credentials if they're not set in env vars
+      if (awsCredentials && !hasEnvAwsCredentials) {
         // Make sure we're appending strings, not objects
         formData.append("awsAccessKeyId", String(awsCredentials.awsAccessKeyId).trim());
         formData.append(
           "awsSecretAccessKey",
           String(awsCredentials.awsSecretAccessKey).trim()
         );
-      } else {
+      } else if (!hasEnvAwsCredentials) {
         throw new Error("AWS credentials are not defined.");
       }
 
-      // Ensure and log the Google API Key
-      if (!googleApiKey) {
-        throw new Error("Google API Key is missing");
-      }
-      
+      // Ensure and append Google API Key if not set in env vars
       formData.append("googleApiKey", googleApiKey); // Include Google API Key
       
       // Include continuation token if we have one
@@ -399,79 +424,123 @@ export default function FaceUpload({
         <p className="text-lg font-semibold mb-2">
           {getTranslation("foundImages", language).replace(
             "{count}",
-            String(imageCount),
+            imageCount.toString()
           )}
         </p>
-        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+        <p className="text-muted-foreground text-sm">
           {getTranslation("uploadInstructions", language)}
         </p>
       </div>
 
-      <div
-        {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-          isDragActive ? "border-primary bg-primary/5" : "border-muted"
-        }`}
-      >
-        <input {...getInputProps()} />
-        <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        {file ? (
-          <p className="text-sm">{file.name}</p>
-        ) : (
-          <p className="text-muted-foreground">
+      {/* Face image section - conditionally allow changes */}
+      {isPolling || isContinuing || analyzeMutation.isPending ? (
+        // Locked view when analysis is running
+        <div className="p-4 border rounded bg-gray-50 dark:bg-gray-800">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded bg-gray-200 dark:bg-gray-700 p-2 flex items-center justify-center">
+              <Upload className="h-8 w-8 text-gray-500" />
+            </div>
+            <div className="flex-1">
+              <p className="font-medium">
+                {file ? file.name : "Face Image"}
+              </p>
+              {file && (
+                <p className="text-sm text-muted-foreground">
+                  {Math.round(file.size / 1024)} KB
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                Analysis in progress - cannot change face image
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        // Interactive dropzone when not analyzing
+        <div
+          {...getRootProps()}
+          className={cn(
+            "border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer transition-colors",
+            isDragActive
+              ? "border-primary bg-primary/10"
+              : "border-gray-300 hover:border-primary"
+          )}
+        >
+          <input {...getInputProps()} />
+          <Upload className="h-10 w-10 text-gray-400 mb-2" />
+          <p className="text-center text-muted-foreground">
             {getTranslation("dropzoneText", language)}
           </p>
-        )}
-      </div>
-
-      {/* Always show AWS credentials form when file is uploaded and credentials aren't provided yet */}
-      {file && !awsCredentials && (
-        <AwsCredentialsForm onSubmit={handleAwsSubmit} />
-      )}
-
-      {/* Only show the button when credentials are provided and analysis hasn't started */}
-      {file && awsCredentials && !analyzeMutation.isPending && !isPolling && !isContinuing && (
-        <Button
-          className="w-full"
-          onClick={handleAnalyze}
-        >
-          Analyze Faces
-        </Button>
-      )}
-
-      {/* Show a loading indicator when analysis is in progress */}
-      {(analyzeMutation.isPending || isPolling || isContinuing) && (
-        <div className="text-center">
-          <p className="text-lg font-semibold mb-2">
-            {progress 
-              ? `Analyzing... ${progress.processed}/${progress.total} images (${progressPercentage}%)`
-              : "Analyzing..."}
-          </p>
-          <Progress 
-            value={progressPercentage || Math.random() * 100} 
-            className="w-full" 
-          />
-          
-          {(isPolling || isContinuing) && (
-            <div className="space-y-2 mt-2">
-              <p className="text-sm text-muted-foreground">
-                {isContinuing 
-                  ? "Processing batch... This may take a minute per batch." 
-                  : "Processing large image set. This will take several minutes."}
-              </p>
-              
-              {/* Add a button to manually continue processing if needed */}
-              {!isContinuing && progress && progress.processed > 0 && progress.processed < progress.total && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={handleRetryAnalysis}
-                  disabled={analyzeMutation.isPending}
-                >
-                  Continue Processing
-                </Button>
-              )}
+          {file && (
+            <div className="mt-2 text-sm font-medium text-center">
+              {file.name} ({Math.round(file.size / 1024)} KB)
             </div>
+          )}
+        </div>
+      )}
+
+      {!awsCredentials ? (
+        /* AWS Credentials form */
+        <div className="space-y-6">
+          {hasEnvAwsCredentials ? (
+            <Button 
+              onClick={handleAnalyze} 
+              className="w-full"
+              disabled={!file}
+            >
+              {analyzeMutation.isPending
+                ? getTranslation("analyze.loading", language)
+                : getTranslation("analyze.button", language)}
+            </Button>
+          ) : (
+            <AwsCredentialsForm onSubmit={handleAwsSubmit} />
+          )}
+        </div>
+      ) : (
+        /* Analysis controls and progress */
+        <div className="space-y-6">
+          {progressPercentage !== null && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">
+                  {progress?.processed || 0} / {progress?.total || 0} images
+                </span>
+                <span className="text-sm font-medium">{progressPercentage}%</span>
+              </div>
+              <Progress value={progressPercentage} />
+            </div>
+          )}
+
+          {!analyzeMutation.isPending && !isPolling && !isContinuing && (
+            <Button
+              onClick={handleAnalyze}
+              className="w-full"
+              disabled={analyzeMutation.isPending || isPolling || isContinuing || !file}
+            >
+              {getTranslation("analyze.button", language)}
+            </Button>
+          )}
+
+          {/* Display a retry button if analysis fails */}
+          {analyzeMutation.isError && !isPolling && !isContinuing && (
+            <Button
+              onClick={handleRetryAnalysis}
+              className="w-full"
+              variant="destructive"
+            >
+              Retry Analysis
+            </Button>
+          )}
+
+          {/* Show as loading if we're analyzing, polling or continuing */}
+          {(analyzeMutation.isPending || isPolling || isContinuing) && (
+            <Button disabled className="w-full">
+              <span className="mr-2">
+                {getTranslation("analyze.loading", language)}
+              </span>
+              {/* Simplified loading spinner */}
+              <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+            </Button>
           )}
         </div>
       )}

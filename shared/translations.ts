@@ -6,7 +6,7 @@ export type Language = z.infer<typeof Language>;
 export const translations = {
   "en": {
     // Hero section
-    "hero.title": "Search in public directory of multiple images for desired faces using AI Recognition!",
+    "hero.title": "Easily find the people you’re looking for in a public image collection!",
     "hero.subtitle": "",
     
     // Forms and inputs
@@ -54,7 +54,7 @@ export const translations = {
   },
   "pt-BR": {
     // Hero section
-    "hero.title": "Pesquise em diretório público de múltiplas imagens por faces desejadas usando reconhecimento por IA!",
+    "hero.title": "Encontre facilmente as pessoas que você está procurando em uma coleção pública de imagens!",
     "hero.subtitle": "",
     
     // Forms and inputs

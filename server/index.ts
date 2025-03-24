@@ -1,7 +1,17 @@
+// Load environment variables from .env file
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import express, { type Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+
+// Log environment variables to confirm they're loaded (remove in production)
+console.log('Environment variables loaded:');
+console.log('- GOOGLE_DRIVE_API_KEY:', process.env.GOOGLE_DRIVE_API_KEY ? 'Present (hidden for security)' : 'Not set');
+console.log('- AWS_ACCESS_KEY_ID:', process.env.AWS_ACCESS_KEY_ID ? 'Present (hidden for security)' : 'Not set');
+console.log('- AWS_SECRET_ACCESS_KEY:', process.env.AWS_SECRET_ACCESS_KEY ? 'Present (hidden for security)' : 'Not set');
 
 const app = express();
 app.use(express.json());
