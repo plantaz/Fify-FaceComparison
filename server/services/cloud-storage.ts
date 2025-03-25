@@ -7,9 +7,9 @@ export interface CloudImage {
 
 export interface CloudStorageProvider {
   scanDirectory: (url: string) => Promise<number>;
-  getImages: () => Promise<CloudImage[]>;
-  getSingleImage: (index: number) => Promise<CloudImage | null>;
-  getImageBatch: (startIndex: number, count: number) => Promise<CloudImage[]>;
+  getImages: (startIndex: number, count: number, imageSize?: string) => Promise<CloudImage[]>;
+  getSingleImage: (imageId: string, imageSize?: string) => Promise<CloudImage | null>;
+  getImageBatch: (startIndex: number, count: number, imageSize?: string) => Promise<CloudImage[]>;
 }
 
 export function createStorageProvider(
@@ -23,7 +23,7 @@ export function createStorageProvider(
   throw new Error("Unsupported storage provider");
 }
 
-class GoogleStorageProvider implements CloudStorageProvider {
+export class GoogleStorageProvider implements CloudStorageProvider {
   private url: string;
   private apiKey: string;
   private listFiles: { id: string; name: string }[] = [];
@@ -97,163 +97,107 @@ class GoogleStorageProvider implements CloudStorageProvider {
     }
   }
 
-  async getImages(): Promise<CloudImage[]> {
-    // Get images from the specified folder
-    if (!this.listFiles || this.listFiles.length === 0) {
-      // Reinitialize if files list is not available
-      await this.scanDirectory(this.url);
-    }
-
-    // Parallel fetch with concurrency limit
-    const MAX_CONCURRENT_DOWNLOADS = 2; // Limit concurrent downloads to avoid overloading APIs
-    const results: CloudImage[] = [];
-    
-    // Process files in small batches
-    for (let i = 0; i < this.listFiles.length; i += MAX_CONCURRENT_DOWNLOADS) {
-      // Define a batch of files to process
-      const batch = this.listFiles.slice(i, i + MAX_CONCURRENT_DOWNLOADS);
+  async getImages(startIndex: number, count: number, imageSize: string = 's1000'): Promise<CloudImage[]> {
+    try {
+      console.log(`Downloading batch of ${count} images (${imageSize} size)`);
+      const files = await this.getFiles();
+      const batch = files.slice(startIndex, startIndex + count);
       
-      console.log(`Processing batch ${Math.floor(i/MAX_CONCURRENT_DOWNLOADS) + 1}/${Math.ceil(this.listFiles.length/MAX_CONCURRENT_DOWNLOADS)}`);
-      
-      // Process this batch of files with a concurrency limit
-      const batchResults = await Promise.all(
-        batch.map(async (file) => {
-          try {
-            // Smaller s1000 size for analysis is plenty (faces don't need high resolution)
-            // This significantly reduces download size and time
-            const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s1000`;
-            
-            console.log(`Downloading image (s1000 size) for file: ${file.name || file.id}`);
-            const response = await fetch(imageUrl);
-            
-            if (!response.ok) {
-              console.error(`Failed to fetch image for ${file.name || file.id}: ${response.statusText}`);
-              return null;
-            }
-            
-            const buffer = Buffer.from(await response.arrayBuffer());
-            return { 
-              id: file.id, 
-              name: file.name,
-              buffer 
-            };
-          } catch (error) {
-            console.error(`Error downloading file ${file.name || file.id}:`, error);
-            return null;
+      // Download images in parallel
+      const downloadPromises = batch.map(async (file, index) => {
+        try {
+          const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=${imageSize}`;
+          const response = await fetch(imageUrl);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to download image: ${response.statusText}`);
           }
-        })
-      );
-      
-      // Filter out any null results and add the successful ones
-      batchResults.filter(Boolean).forEach(item => {
-        if (item) results.push(item);
+          
+          const buffer = Buffer.from(await response.arrayBuffer());
+          return {
+            ...file,
+            buffer,
+            index: startIndex + index
+          };
+        } catch (error) {
+          console.error(`Error downloading image ${file.id}:`, error);
+          return {
+            ...file,
+            index: startIndex + index
+          };
+        }
       });
       
-      // Add a small delay between batches to avoid rate limiting
-      if (i + MAX_CONCURRENT_DOWNLOADS < this.listFiles.length) {
-        console.log("Adding delay between batches to avoid rate limiting");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      return Promise.all(downloadPromises) as Promise<CloudImage[]>;
+    } catch (error) {
+      console.error('Error getting image batch:', error);
+      return [];
     }
-    
-    console.log(`Downloaded ${results.length} images for analysis`);
-    return results;
   }
 
-  async getSingleImage(index: number): Promise<CloudImage | null> {
+  async getSingleImage(imageId: string, imageSize: string = 's1000'): Promise<CloudImage | null> {
     try {
-      // Make sure we have files
-      if (!this.listFiles || this.listFiles.length === 0) {
-        // Reinitialize if files list is not available
-        await this.scanDirectory(this.url);
+      const imageUrl = `https://lh3.googleusercontent.com/d/${imageId}=${imageSize}`;
+      const response = await fetch(imageUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to download image: ${response.statusText}`);
       }
       
-      // Check if index is valid
-      if (index < 0 || index >= this.listFiles.length) {
-        console.log(`Requested image at index ${index} is out of bounds (0-${this.listFiles.length - 1})`);
-        return null;
-      }
-      
-      const file = this.listFiles[index];
-      console.log(`Downloading single image (s1000 size) for file: ${file.name || file.id}`);
-      
-      try {
-        // Use s1000 size which works better for face recognition while still being optimized
-        const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s1000`;
-        
-        const response = await fetch(imageUrl);
-        if (!response.ok) {
-          console.error(`Failed to fetch image for ${file.name || file.id}: ${response.statusText}`);
-          return null;
-        }
-        
-        const buffer = Buffer.from(await response.arrayBuffer());
-        return { 
-          id: file.id, 
-          name: file.name,
-          buffer 
-        };
-      } catch (error) {
-        console.error(`Error downloading file ${file.name || file.id}:`, error);
-        return null;
-      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      return {
+        id: imageId,
+        name: `Image ${imageId}`,
+        buffer
+      };
     } catch (error) {
-      console.error("Error getting single image:", error);
+      console.error(`Error downloading single image ${imageId}:`, error);
       return null;
     }
   }
-  
-  // New method: get multiple images in parallel for faster processing
-  async getImageBatch(startIndex: number, count: number): Promise<CloudImage[]> {
+
+  async getImageBatch(startIndex: number, count: number, imageSize: string = 's1000'): Promise<CloudImage[]> {
     try {
-      // Make sure we have files
-      if (!this.listFiles || this.listFiles.length === 0) {
-        // Reinitialize if files list is not available
-        await this.scanDirectory(this.url);
-      }
+      console.log(`Downloading batch of ${count} images (${imageSize} size)`);
+      const files = await this.getFiles();
+      const batch = files.slice(startIndex, startIndex + count);
       
-      // Validate indexes
-      const endIndex = Math.min(startIndex + count, this.listFiles.length);
-      if (startIndex >= this.listFiles.length || startIndex < 0) {
-        console.log(`Start index ${startIndex} is out of bounds`);
-        return [];
-      }
-      
-      // Get the batch of files to process
-      const filesToProcess = this.listFiles.slice(startIndex, endIndex);
-      console.log(`Downloading batch of ${filesToProcess.length} images (s1000 size)`);
-      
-      // Process all files in parallel for speed
-      const results = await Promise.all(
-        filesToProcess.map(async (file, index) => {
-          try {
-            const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=s1000`;
-            const response = await fetch(imageUrl);
-            
-            if (!response.ok) {
-              console.error(`Failed to fetch image for ${file.name || file.id}: ${response.statusText}`);
-              return null;
-            }
-            
-            const buffer = Buffer.from(await response.arrayBuffer());
-            return { 
-              id: file.id, 
-              name: file.name,
-              buffer,
-              index: startIndex + index // Include the original index for reference
-            };
-          } catch (error) {
-            console.error(`Error downloading file ${file.name || file.id}:`, error);
-            return null;
+      // Download images in parallel
+      const downloadPromises = batch.map(async (file, index) => {
+        try {
+          const imageUrl = `https://lh3.googleusercontent.com/d/${file.id}=${imageSize}`;
+          const response = await fetch(imageUrl);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to download image: ${response.statusText}`);
           }
-        })
-      );
+          
+          const buffer = Buffer.from(await response.arrayBuffer());
+          return {
+            ...file,
+            buffer,
+            index: startIndex + index
+          };
+        } catch (error) {
+          console.error(`Error downloading image ${file.id}:`, error);
+          return {
+            ...file,
+            index: startIndex + index
+          };
+        }
+      });
       
-      // Filter out any failures
-      return results.filter(Boolean) as CloudImage[];
+      return Promise.all(downloadPromises) as Promise<CloudImage[]>;
     } catch (error) {
-      console.error("Error getting image batch:", error);
+      console.error('Error getting image batch:', error);
       return [];
     }
+  }
+
+  private async getFiles(): Promise<{ id: string; name: string }[]> {
+    if (!this.listFiles || this.listFiles.length === 0) {
+      await this.scanDirectory(this.url);
+    }
+    return this.listFiles;
   }
 }

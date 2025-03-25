@@ -346,18 +346,19 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Process 6 images per batch for optimal performance
-      const BATCH_SIZE = 6;
+      // Process 10 images per batch for optimal performance (increased from 6)
+      const BATCH_SIZE = 10;
+      const IMAGE_SIZE = 's600'; // Reduced from s1000 to s600 for faster downloads while maintaining quality
       
       // Fetch multiple images in parallel for better performance
       console.log(`[API] Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
-      const imagesBatch = await provider.getImageBatch(startIndex, BATCH_SIZE);
+      const imagesBatch = await provider.getImageBatch(startIndex, BATCH_SIZE, IMAGE_SIZE);
       
       // Process each image in the batch
       const newResults = [];
       const batchStartTime = Date.now();
       
-      // Create Rekognition client with keep-alive
+      // Create Rekognition client with optimized settings
       const rekognition = new RekognitionClient({
         region: process.env.MY_AWS_REGION || "us-east-1",
         credentials: {
@@ -379,6 +380,7 @@ export function registerRoutes(app: Express): void {
             SourceImage: { Bytes: referenceImageBuffer },
             TargetImage: { Bytes: image.buffer },
             SimilarityThreshold: 70,
+            QualityFilter: 'LOW'  // Accept lower quality matches since we reduced image size
           });
           
           const response = await rekognition.send(command);
@@ -388,7 +390,7 @@ export function registerRoutes(app: Express): void {
             imageId: imageIndex + 1,
             similarity: bestMatch?.Similarity || 0,
             matched: !!bestMatch,
-            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=${IMAGE_SIZE}` : undefined,
             driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
           };
         } catch (error) {
@@ -398,7 +400,7 @@ export function registerRoutes(app: Express): void {
             similarity: 0,
             matched: false,
             error: error instanceof Error ? error.message : 'Unknown error',
-            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=${IMAGE_SIZE}` : undefined,
             driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
           };
         }
