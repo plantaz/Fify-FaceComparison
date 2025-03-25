@@ -10,8 +10,8 @@ import { setupVite, serveStatic, log } from "./vite";
 // Log environment variables to confirm they're loaded (remove in production)
 console.log('Environment variables loaded:');
 console.log('- GOOGLE_DRIVE_API_KEY:', process.env.GOOGLE_DRIVE_API_KEY ? 'Present (hidden for security)' : 'Not set');
-console.log('- AWS_ACCESS_KEY_ID:', process.env.AWS_ACCESS_KEY_ID ? 'Present (hidden for security)' : 'Not set');
-console.log('- AWS_SECRET_ACCESS_KEY:', process.env.AWS_SECRET_ACCESS_KEY ? 'Present (hidden for security)' : 'Not set');
+console.log('- FIFY_AWS_ACCESS_KEY:', process.env.FIFY_AWS_ACCESS_KEY ? 'Present (hidden for security)' : 'Not set');
+console.log('- FIFY_AWS_SECRET_KEY:', process.env.FIFY_AWS_SECRET_KEY ? 'Present (hidden for security)' : 'Not set');
 
 const app = express();
 app.use(express.json());

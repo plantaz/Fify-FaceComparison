@@ -17,8 +17,8 @@ NODE_ENV=development
 
 # Required API credentials
 GOOGLE_DRIVE_API_KEY=your_google_drive_api_key
-AWS_ACCESS_KEY_ID=your_aws_access_key_id
-AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+FIFY_AWS_ACCESS_KEY=your_aws_access_key_id
+FIFY_AWS_SECRET_KEY=your_aws_secret_access_key
 ```
 
 > ⚠️ **Important Security Warning**: Never commit your `.env` file containing real API keys or credentials to Git. The `.env` file is included in `.gitignore` and should remain that way. Only commit the `.env.example` template.

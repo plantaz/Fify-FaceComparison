@@ -36,8 +36,8 @@ export function registerRoutes(app: Express): void {
 
       // Check if environment variables are set
       const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
-      const hasEnvAwsAccessKeyId = !!process.env.AWS_ACCESS_KEY_ID;
-      const hasEnvAwsSecretAccessKey = !!process.env.AWS_SECRET_ACCESS_KEY;
+      const hasEnvAwsAccessKeyId = !!process.env.FIFY_AWS_ACCESS_KEY;
+      const hasEnvAwsSecretAccessKey = !!process.env.FIFY_AWS_SECRET_KEY;
       
       // Use environment variables if available, otherwise use the provided values
       const apiKey = hasEnvGoogleApiKey ? process.env.GOOGLE_DRIVE_API_KEY : googleApiKey;
@@ -92,15 +92,15 @@ export function registerRoutes(app: Express): void {
 
       // Check if environment variables are set
       const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
-      const hasEnvAwsAccessKeyId = !!process.env.AWS_ACCESS_KEY_ID;
-      const hasEnvAwsSecretAccessKey = !!process.env.AWS_SECRET_ACCESS_KEY;
+      const hasEnvAwsAccessKeyId = !!process.env.FIFY_AWS_ACCESS_KEY;
+      const hasEnvAwsSecretAccessKey = !!process.env.FIFY_AWS_SECRET_KEY;
 
       // Trim credential strings
       const cleanAwsAccessKeyId = hasEnvAwsAccessKeyId 
-        ? process.env.AWS_ACCESS_KEY_ID 
+        ? process.env.FIFY_AWS_ACCESS_KEY 
         : awsAccessKeyId?.trim();
       const cleanAwsSecretAccessKey = hasEnvAwsSecretAccessKey 
-        ? process.env.AWS_SECRET_ACCESS_KEY 
+        ? process.env.FIFY_AWS_SECRET_KEY 
         : awsSecretAccessKey?.trim();
       const cleanGoogleApiKey = hasEnvGoogleApiKey 
         ? process.env.GOOGLE_DRIVE_API_KEY 
@@ -472,8 +472,8 @@ export function registerRoutes(app: Express): void {
       
       // Check if environment variables are set
       const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
-      const hasEnvAwsAccessKeyId = !!process.env.AWS_ACCESS_KEY_ID;
-      const hasEnvAwsSecretAccessKey = !!process.env.AWS_SECRET_ACCESS_KEY;
+      const hasEnvAwsAccessKeyId = !!process.env.FIFY_AWS_ACCESS_KEY;
+      const hasEnvAwsSecretAccessKey = !!process.env.FIFY_AWS_SECRET_KEY;
       
       return res.json({
         ...job,
@@ -490,8 +490,8 @@ export function registerRoutes(app: Express): void {
   app.get("/api/env-check", (req, res) => {
     const envStatus = {
       googleApiKey: !!process.env.GOOGLE_DRIVE_API_KEY,
-      awsAccessKeyId: !!process.env.AWS_ACCESS_KEY_ID, 
-      awsSecretAccessKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+      awsAccessKeyId: !!process.env.FIFY_AWS_ACCESS_KEY, 
+      awsSecretAccessKey: !!process.env.FIFY_AWS_SECRET_KEY,
       myAwsRegion: process.env.MY_AWS_REGION || "us-east-1"
     };
     
