@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import { Express } from 'express';
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { driveUrlSchema } from "@shared/schema";
@@ -10,6 +10,40 @@ import {
   RekognitionClient,
   CompareFacesCommand,
 } from "@aws-sdk/client-rekognition";
+import { CloudStorageProvider } from './services/cloud-storage';
+
+interface DriveFile {
+  id: string;
+  name: string;
+  index?: number;
+  buffer?: Buffer;
+}
+
+interface ScanResult {
+  imageId: number;
+  similarity: number;
+  matched: boolean;
+  error?: string;
+  url?: string;
+  driveUrl?: string;
+}
+
+interface ScanJob {
+  id: number;
+  driveUrl: string;
+  status: string;
+  results: ScanResult[];
+  imageCount: number;
+  referenceImageId?: string;
+  createdAt: string;
+  driveType: string;
+}
+
+interface ContinuationToken {
+  referenceImageId: string;
+  nextIndex: number;
+  jobId: number;
+}
 
 // Configure multer for file uploads
 const upload = multer({
@@ -86,9 +120,19 @@ export function registerRoutes(app: Express): void {
       // Simplified logging 
       console.log(`[API] ${continuationToken ? "Continuation" : "New"} analysis for job: ${jobId}`);
 
-      // Lambda safe timeout (4 seconds is very conservative to prevent issues)
+      // Lambda safe timeout (9 seconds to allow for larger batch processing)
       const startTime = Date.now();
-      const SAFE_TIMEOUT = 4000; // 4 seconds for a smaller batch size
+      const SAFE_TIMEOUT = 9000; // 9 seconds for larger batch size
+      
+      // Function to check if we're approaching timeout
+      const isApproachingTimeout = () => {
+        const elapsedMs = Date.now() - startTime;
+        const isClose = elapsedMs > SAFE_TIMEOUT * 0.8;
+        if (isClose) {
+          console.log(`[API] Approaching timeout after ${elapsedMs}ms`);
+        }
+        return isClose;
+      };
 
       // Check if environment variables are set
       const hasEnvGoogleApiKey = !!process.env.GOOGLE_DRIVE_API_KEY;
@@ -270,11 +314,11 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Process 2 images per batch for faster processing with less risk of timeout
-      const BATCH_SIZE = 2;
+      // Process 4 images per batch for better performance
+      const BATCH_SIZE = 4;
       
       // Fetch multiple images in parallel for better performance
-      console.log(`Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
+      console.log(`[API] Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
       const imagesBatch = await provider.getImageBatch(startIndex, BATCH_SIZE);
       
       // If we couldn't fetch any images, check if we've reached the end
@@ -310,10 +354,11 @@ export function registerRoutes(app: Express): void {
       
       // Process each image in the batch
       const newResults = []; // Track new results separately to avoid duplication
+      const batchStartTime = Date.now();
       
       for (const image of imagesBatch) {
         // Check if we're approaching timeout
-        if (Date.now() - startTime > SAFE_TIMEOUT * 0.8) {
+        if (isApproachingTimeout()) {
           console.log(`[API] Approaching time limit during processing, stopping before index ${image.index}`);
           
           // Add new results to the existing results array, avoiding duplicates
@@ -337,6 +382,9 @@ export function registerRoutes(app: Express): void {
             jobId
           });
           
+          const batchDuration = Date.now() - batchStartTime;
+          console.log(`[API] Batch processing took ${batchDuration}ms for ${newResults.length} images`);
+          
           return res.json({
             ...job,
             results,
@@ -345,7 +393,9 @@ export function registerRoutes(app: Express): void {
               total: job.imageCount,
               processed: results.length,
               isComplete: false,
-              nextIndex: image.index
+              nextIndex: image.index,
+              batchDuration,
+              imagesPerBatch: newResults.length
             }
           });
         }
@@ -359,7 +409,7 @@ export function registerRoutes(app: Express): void {
         
         try {
           const imageIndex = image.index as number;
-          console.log(`Processing image ${imageIndex + 1}/${job.imageCount}`);
+          console.log(`[API] Processing image ${imageIndex + 1}/${job.imageCount} (Batch time: ${Date.now() - batchStartTime}ms)`);
           
           // Create face comparison command
           const command = new CompareFacesCommand({
