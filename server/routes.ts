@@ -45,6 +45,16 @@ interface ContinuationToken {
   jobId: number;
 }
 
+// Cache for directory scan results
+interface DirectoryCache {
+  imageCount: number;
+  lastUpdated: number;
+  driveUrl: string;
+}
+
+const directoryCache: Map<string, DirectoryCache> = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -120,14 +130,15 @@ export function registerRoutes(app: Express): void {
       // Simplified logging 
       console.log(`[API] ${continuationToken ? "Continuation" : "New"} analysis for job: ${jobId}`);
 
-      // Lambda safe timeout (9 seconds to allow for larger batch processing)
+      // Lambda safe timeout (10 seconds for optimal batch processing)
       const startTime = Date.now();
-      const SAFE_TIMEOUT = 9000; // 9 seconds for larger batch size
+      const SAFE_TIMEOUT = 10000; // 10 seconds
+      const TIMEOUT_WARNING = 0.85; // Warn at 85% of timeout
       
       // Function to check if we're approaching timeout
       const isApproachingTimeout = () => {
         const elapsedMs = Date.now() - startTime;
-        const isClose = elapsedMs > SAFE_TIMEOUT * 0.8;
+        const isClose = elapsedMs > SAFE_TIMEOUT * TIMEOUT_WARNING;
         if (isClose) {
           console.log(`[API] Approaching timeout after ${elapsedMs}ms`);
         }
@@ -163,6 +174,39 @@ export function registerRoutes(app: Express): void {
       const job = await storage.getScanJob(jobId);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Initialize provider early to reuse
+      const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
+
+      // Check directory cache or scan if needed
+      const cacheKey = `${job.driveUrl}`;
+      const cachedDir = directoryCache.get(cacheKey);
+      let imageCount = job.imageCount;
+
+      if (!cachedDir || (Date.now() - cachedDir.lastUpdated > CACHE_TTL)) {
+        try {
+          console.log(`[API] Cache miss or expired, scanning directory`);
+          imageCount = await provider.scanDirectory(job.driveUrl);
+          directoryCache.set(cacheKey, {
+            imageCount,
+            lastUpdated: Date.now(),
+            driveUrl: job.driveUrl
+          });
+          
+          // Update job if count changed
+          if (imageCount !== job.imageCount) {
+            await storage.updateJobImageCount(jobId, imageCount);
+            job.imageCount = imageCount;
+          }
+        } catch (error) {
+          console.error("Error scanning directory:", error);
+          // Use existing count if scan fails
+          console.log(`[API] Using existing image count: ${imageCount}`);
+        }
+      } else {
+        console.log(`[API] Using cached directory info, count: ${cachedDir.imageCount}`);
+        imageCount = cachedDir.imageCount;
       }
 
       // Parse continuation token if present or initialize state
@@ -264,18 +308,6 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Create Rekognition client
-      const rekognition = new RekognitionClient({
-        region: process.env.MY_AWS_REGION || "us-east-1",
-        credentials: {
-          accessKeyId: cleanAwsAccessKeyId,
-          secretAccessKey: cleanAwsSecretAccessKey
-        }
-      });
-      
-      // Initialize provider
-      const provider = createStorageProvider(job.driveUrl, cleanGoogleApiKey);
-      
       // Prepare the reference image
       let referenceImageBuffer: Buffer | null = null;
       
@@ -314,196 +346,122 @@ export function registerRoutes(app: Express): void {
         });
       }
       
-      // Process 4 images per batch for better performance
-      const BATCH_SIZE = 4;
+      // Process 6 images per batch for optimal performance
+      const BATCH_SIZE = 6;
       
       // Fetch multiple images in parallel for better performance
       console.log(`[API] Fetching batch of ${BATCH_SIZE} images starting from index ${startIndex}`);
       const imagesBatch = await provider.getImageBatch(startIndex, BATCH_SIZE);
       
-      // If we couldn't fetch any images, check if we've reached the end
-      if (imagesBatch.length === 0) {
-        // Final deduplicate before marking as complete
-        const finalUniqueImageIds = new Set();
-        const finalUniqueResults = [];
-        
-        for (const result of results) {
-          if (!finalUniqueImageIds.has(result.imageId)) {
-            finalUniqueImageIds.add(result.imageId);
-            finalUniqueResults.push(result);
-          }
-        }
-        
-        if (results.length !== finalUniqueResults.length) {
-          console.log(`[API] Final deduplication - removed ${results.length - finalUniqueResults.length} duplicates`);
-          results = finalUniqueResults;
-          await storage.updateScanJobResults(jobId, finalUniqueResults, "complete");
-        }
-        
-        return res.json({
-          ...job,
-          results,
-          processing: {
-            total: job.imageCount,
-            processed: results.length,
-            isComplete: true, // Mark as complete if we've processed all images
-            nextIndex: startIndex
-          }
-        });
-      }
-      
       // Process each image in the batch
-      const newResults = []; // Track new results separately to avoid duplication
+      const newResults = [];
       const batchStartTime = Date.now();
       
-      for (const image of imagesBatch) {
-        // Check if we're approaching timeout
-        if (isApproachingTimeout()) {
-          console.log(`[API] Approaching time limit during processing, stopping before index ${image.index}`);
-          
-          // Add new results to the existing results array, avoiding duplicates
-          for (const newResult of newResults) {
-            // Check if this result already exists by imageId
-            const existingIndex = results.findIndex(r => r.imageId === newResult.imageId);
-            if (existingIndex === -1) {
-              results.push(newResult);
-            } else {
-              // Replace existing result if needed
-              results[existingIndex] = newResult;
-            }
-          }
-          
-          // Save results and return with continuation token for remaining images
-          await storage.updateScanJobResults(jobId, results, "processing");
-          
-          const nextToken = JSON.stringify({
-            referenceImageId: referenceImageId,
-            nextIndex: image.index,
-            jobId
-          });
-          
-          const batchDuration = Date.now() - batchStartTime;
-          console.log(`[API] Batch processing took ${batchDuration}ms for ${newResults.length} images`);
-          
-          return res.json({
-            ...job,
-            results,
-            continuationToken: nextToken,
-            processing: {
-              total: job.imageCount,
-              processed: results.length,
-              isComplete: false,
-              nextIndex: image.index,
-              batchDuration,
-              imagesPerBatch: newResults.length
-            }
-          });
-        }
-        
-        // Check if we've already processed this image (avoid duplicates)
-        const alreadyProcessedIndex = results.findIndex(r => r.imageId === (image.index as number) + 1);
-        if (alreadyProcessedIndex !== -1) {
-          console.log(`[API] Skipping already processed image ${(image.index as number) + 1}`);
-          continue;
-        }
+      // Create Rekognition client with keep-alive
+      const rekognition = new RekognitionClient({
+        region: process.env.MY_AWS_REGION || "us-east-1",
+        credentials: {
+          accessKeyId: cleanAwsAccessKeyId,
+          secretAccessKey: cleanAwsSecretAccessKey
+        },
+        maxAttempts: 2 // Reduce retry attempts for faster failure
+      });
+
+      // Process images in parallel with controlled concurrency
+      const processingPromises = imagesBatch.map(async (image) => {
+        if (!referenceImageBuffer) return null;
         
         try {
           const imageIndex = image.index as number;
-          console.log(`[API] Processing image ${imageIndex + 1}/${job.imageCount} (Batch time: ${Date.now() - batchStartTime}ms)`);
+          console.log(`[API] Processing image ${imageIndex + 1}/${job.imageCount}`);
           
-          // Create face comparison command
           const command = new CompareFacesCommand({
             SourceImage: { Bytes: referenceImageBuffer },
             TargetImage: { Bytes: image.buffer },
             SimilarityThreshold: 70,
           });
           
-          // Send to Rekognition
-          try {
-            const response = await rekognition.send(command);
-            const bestMatch = response.FaceMatches?.[0];
-            
-            // Add to new results array
-            newResults.push({
-              imageId: imageIndex + 1,
-              similarity: bestMatch?.Similarity || 0,
-              matched: !!bestMatch,
-              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
-              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-            });
-            
-          } catch (rekognitionError) {
-            console.error(`[API] AWS Rekognition error for image ${imageIndex + 1}:`, 
-              rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error'
-            );
-            
-            // Add error result to new results array
-            newResults.push({
-              imageId: imageIndex + 1,
-              similarity: 0,
-              matched: false,
-              error: rekognitionError instanceof Error ? rekognitionError.message : 'Unknown error',
-              url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
-              driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
-            });
-          }
+          const response = await rekognition.send(command);
+          const bestMatch = response.FaceMatches?.[0];
           
-        } catch (error) {
-          const imageIndex = image.index as number;
-          console.error(`Face comparison error for image ${imageIndex + 1}:`, error);
-          
-          // Add error result to new results array
-          newResults.push({
+          return {
             imageId: imageIndex + 1,
+            similarity: bestMatch?.Similarity || 0,
+            matched: !!bestMatch,
+            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+            driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+          };
+        } catch (error) {
+          console.error(`[API] Error processing image ${image.index as number + 1}:`, error);
+          return {
+            imageId: (image.index as number) + 1,
             similarity: 0,
             matched: false,
-          });
+            error: error instanceof Error ? error.message : 'Unknown error',
+            url: image.id ? `https://lh3.googleusercontent.com/d/${image.id}=s1000` : undefined,
+            driveUrl: `https://drive.google.com/file/d/${image.id}/view`,
+          };
         }
+      });
+
+      // Wait for all images to process or timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Batch timeout')), SAFE_TIMEOUT * TIMEOUT_WARNING);
+      });
+
+      try {
+        const processedResults = await Promise.race([
+          Promise.all(processingPromises),
+          timeoutPromise
+        ]) as (ScanResult | null)[];
+
+        // Filter out null results and add to newResults
+        newResults.push(...processedResults.filter((r): r is ScanResult => r !== null));
+      } catch (error) {
+        console.log('[API] Batch processing interrupted due to timeout');
       }
-      
-      // Merge new results with existing results, ensuring no duplicates
+
+      // Merge results and continue
+      const mergedResults = [...results];
       for (const newResult of newResults) {
-        // Check if this result already exists by imageId
-        const existingIndex = results.findIndex(r => r.imageId === newResult.imageId);
+        const existingIndex = mergedResults.findIndex(r => r.imageId === newResult.imageId);
         if (existingIndex === -1) {
-          results.push(newResult);
+          mergedResults.push(newResult);
         } else {
-          // Replace existing result with new one
-          results[existingIndex] = newResult;
+          mergedResults[existingIndex] = newResult;
         }
       }
-      
-      // Save all results at once after processing the batch
-      await storage.updateScanJobResults(jobId, results, "processing");
-      
-      // Calculate the next index based on what we actually processed
-      const lastProcessedIndex = imagesBatch.length > 0 
-        ? Math.max(...imagesBatch.map(img => (img.index as number))) + 1 
-        : startIndex;
-      
-      const isComplete = lastProcessedIndex >= job.imageCount;
+
+      // Save progress
+      await storage.updateScanJobResults(jobId, mergedResults, "processing");
+
+      // Calculate next batch
+      const lastProcessedIndex = Math.max(...newResults.map(r => r.imageId));
+      const isComplete = lastProcessedIndex >= imageCount;
+
       const nextToken = !isComplete ? JSON.stringify({
-        referenceImageId: referenceImageId,
+        referenceImageId,
         nextIndex: lastProcessedIndex,
         jobId
       }) : null;
-      
-      // Update final status
-      const finalStatus = isComplete ? "complete" : "processing";
-      const updatedJob = await storage.updateScanJobResults(jobId, results, finalStatus);
-      
-      // Return response with continuation token if needed
+
+      const batchDuration = Date.now() - batchStartTime;
+      console.log(`[API] Batch processing completed in ${batchDuration}ms, processed ${newResults.length} images`);
+
       return res.json({
-        ...updatedJob,
+        ...job,
+        results: mergedResults,
         continuationToken: nextToken,
         processing: {
-          total: job.imageCount,
-          processed: results.length,
+          total: imageCount,
+          processed: mergedResults.length,
           isComplete,
-          nextIndex: lastProcessedIndex
+          nextIndex: lastProcessedIndex,
+          batchDuration,
+          imagesPerBatch: newResults.length
         }
       });
-      
+
     } catch (error) {
       console.error("Analysis error:", error);
       res.status(500).json({ error: (error as Error).message });
